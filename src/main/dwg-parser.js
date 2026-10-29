@@ -8,6 +8,7 @@
  */
 
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { aciHex } = require('./dxf-parser');
 
 let libPromise = null;
@@ -35,9 +36,11 @@ function getLib() {
     const dir = wasmDir();
     let mod = null;
 
-    // 1) 优先从 asar.unpacked 的真实磁盘路径加载（打包环境）
+    // 1) 优先从真实磁盘路径加载（打包环境 / 开发环境都适用）。
+    // 用 pathToFileURL 而不是手拼 'file:///'：安装目录常含空格
+    // （如 C:\Program Files\RatViewer），未编码的空格会让 ESM import 抛 Invalid URL。
     try {
-      const esm = 'file:///' + path.join(path.dirname(dir), 'dist/libredwg-web.js').replace(/\\/g, '/');
+      const esm = pathToFileURL(path.join(path.dirname(dir), 'dist/libredwg-web.js')).href;
       mod = await import(esm);
     } catch (e) { /* ignore */ }
 

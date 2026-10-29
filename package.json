@@ -22,6 +22,10 @@
     "appId": "com.rat.imageviewer",
     "productName": "RatViewer",
     "copyright": "Copyright (c) 2026 Rat",
+    "asar": true,
+    "compression": "maximum",
+    "electronLanguages": ["en-US", "zh-CN", "ja", "ko"],
+    "removePackageScripts": true,
     "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "dist",
