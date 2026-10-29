@@ -16,9 +16,9 @@ const { promisify } = require('node:util');
 
 const run = promisify(execFile);
 
-const DISPLAY_NAME = 'Rat看图王';   // 只作为「值」出现，显示给人看
-const KEY_NAME = 'RatImageViewer';  // 注册表键名一律用 ASCII，避开编码坑
-const PROGID = 'RatImageViewer.Image';
+const DISPLAY_NAME = 'RatViewer';   // 只作为「值」出现，显示给人看
+const KEY_NAME = 'RatViewer';  // 注册表键名一律用 ASCII，避开编码坑
+const PROGID = 'RatViewer.Image';
 
 // 某些受限环境（例如自动化沙箱）会拦截 reg.exe。设为 1 时本模块整体降级为
 // 只报告状态、不碰注册表 —— 便于在沙箱内验证程序能否正常启动。

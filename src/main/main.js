@@ -520,7 +520,7 @@ function createWindow() {
     show: false,
     frame: false,
     backgroundColor: themeBackground(theme),
-    title: 'Rat看图王',
+    title: 'RatViewer',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // 把程序版本号（不带头缀 V）同步注入渲染层，避免前端写死版本
@@ -596,7 +596,8 @@ function registerIpc() {
       ],
     });
     if (r.canceled) return [];
-    const list = r.filePaths.filter((p) => scanner.isSupported(p) || true);
+    // 真正按支持的扩展名过滤；非图片文件不会进会话，避免后面 select 才报错。
+    const list = r.filePaths.filter((p) => scanner.isSupported(p));
     return list.map(allow);
   });
 
@@ -659,76 +660,64 @@ function registerIpc() {
       height: 0,
     };
 
-    if (scanner.NATIVE.has(ext)) {
-      const head = await exifReader.readExif(abs);
-      return {
-        ok: true,
-        kind: 'native',
-        ...base,
-        width: head?.width || 0,
-        height: head?.height || 0,
-      };
-    }
-
-    const isCad = scanner.CAD.has(ext);
-    if (scanner.PREVIEW.has(ext) || isCad) {
-      const isCdr = cdr.supported(ext) && cdr.toolConfigured();
-      const isDwg = isCad && dwg.supported(ext);
-      // 共用的矢量预热（CDR=外部进程 / DWG=进程内 WASM），完成后推给渲染层热替换
-      const vectorNotify = (tag) => (err, r) => {
-        if (err) {
-          logDiag(tag, `矢量渲染失败 ${abs}: ${err.message || err}`);
-          return;
-        }
-        if (r && win && !win.isDestroyed()) {
-          win.webContents.send('cdr:vector', {
-            path: abs,
-            url: 'ratfile://svg?p=' + encodeURIComponent(abs) + '&t=' + Date.now(),
-            pages: r.pages || 1,
-            width: r.width,
-            height: r.height,
-          });
-        }
-      };
-      if (isCdr) cdr.warmup(abs, vectorNotify('cdr'));
-      if (isDwg) dwg.warmup(abs, vectorNotify('dwg'), { dark: isDarkTheme() });
-
-      if (isCad) {
-        // DWG/DXF 没有位图预览可挖 —— 直接等矢量 SVG（解析毫秒级）
-        return { ok: true, kind: 'vector', ...base, width: 0, height: 0 };
-      }
-
-      const pv = await getPreview(abs, false).catch(() => null);
-      if (!pv) {
-        if (isCdr) {
-          // 没有内嵌预览也没关系 —— 矢量通道就是为这种文件准备的
-          return { ok: true, kind: 'vector', ...base, width: 0, height: 0 };
-        }
-        return {
-          ok: false,
-          reason: 'needs-plugin',
-          ...base,
-          message: '该格式需要解码插件（本版未内置），且文件里没有可用的内嵌预览。',
-        };
-      }
-      return {
-        ok: true,
-        kind: 'preview',
-        previewSource: pv.source,
-        ...base,
-        width: pv.width,
-        height: pv.height,
-        size: pv.buffer.length,
-        originalSize: st.size,
-      };
-    }
-
+  if (scanner.NATIVE.has(ext)) {
+    const head = await exifReader.readExif(abs);
+    // 一并带出 EXIF，渲染层无需再发一次 exif:read（省一次 IPC、翻页更快）
     return {
-      ok: false,
-      reason: 'unsupported',
+      ok: true,
+      kind: 'native',
+      exif: head || null,
       ...base,
-      message: '本版暂不支持该格式。',
+      width: head?.width || 0,
+      height: head?.height || 0,
     };
+  }
+
+  const isCad = scanner.CAD.has(ext);
+  if (scanner.PREVIEW.has(ext) || isCad) {
+    const isCdr = cdr.supported(ext) && cdr.toolConfigured();
+    const isDwg = isCad && dwg.supported(ext);
+    // 只有在「最终会以矢量方式显示」时才预热矢量引擎：
+    // 有内嵌预览的 CDR/CMX 直接走预览，不需要（也不该）跑 libcdr，
+    // 否则只是白白起一个外部进程，还白推一条渲染层根本没订阅的 cdr:vector 消息。
+    let pv = null;
+    if (scanner.PREVIEW.has(ext)) pv = await getPreview(abs, false).catch(() => null);
+    const willBeVector = isCad || (isCdr && !pv);
+
+    if (willBeVector) {
+      const tag = isCdr ? 'cdr' : 'dwg';
+      const logFail = (err) => logDiag(tag, `矢量渲染失败 ${abs}: ${err && err.message || err}`);
+      if (isCdr) cdr.warmup(abs, (e) => { if (e) logFail(e); });
+      if (isDwg) dwg.warmup(abs, (e) => { if (e) logFail(e); }, { dark: isDarkTheme() });
+      return { ok: true, kind: 'vector', ...base, width: 0, height: 0 };
+    }
+
+    if (!pv) {
+      return {
+        ok: false,
+        reason: 'needs-plugin',
+        ...base,
+        message: '该格式需要解码插件（本版未内置），且文件里没有可用的内嵌预览。',
+      };
+    }
+    return {
+      ok: true,
+      kind: 'preview',
+      previewSource: pv.source,
+      ...base,
+      width: pv.width,
+      height: pv.height,
+      size: pv.buffer.length,
+      originalSize: st.size,
+    };
+  }
+
+  return {
+    ok: false,
+    reason: 'unsupported',
+    ...base,
+    message: '本版暂不支持该格式。',
+  };
   });
 
   // CDR/CMX/DWG/DXF 矢量渲染：返回缓存或等待转换完成（渲染层切回页签时主动拉取）
@@ -857,6 +846,27 @@ function registerIpc() {
       mode: s.theme || 'light',
       dark: nativeTheme.shouldUseDarkColors,
     };
+  });
+
+  // 通用配置读写（幻灯片间隔、最近文件夹等都走这里，避免每个开关各写一个 handler）
+  ipcMain.handle('config:get', () => readSettings());
+  ipcMain.handle('config:set', (_e, patch) => {
+    if (!patch || typeof patch !== 'object') return readSettings();
+    return writeSettings(patch);
+  });
+
+  // 最近打开的文件夹（持久化在 userData/settings.json，最多保留 12 个）
+  ipcMain.handle('fs:addRecent', (_e, folder) => {
+    if (!folder) return [];
+    const s = readSettings();
+    const list = Array.isArray(s.recentFolders) ? s.recentFolders.filter((x) => x !== folder) : [];
+    list.unshift(folder);
+    const next = writeSettings({ recentFolders: list.slice(0, 12) });
+    return next.recentFolders || [];
+  });
+  ipcMain.handle('fs:recent', () => {
+    const s = readSettings();
+    return Array.isArray(s.recentFolders) ? s.recentFolders : [];
   });
 
   // 文件关联

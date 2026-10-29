@@ -84,6 +84,15 @@ function aciHex(idx) {
 function decodeBuffer(buf) {
   let enc = 'utf-8';
   try {
+    // BOM 优先：UTF-16（LE/BE）或 UTF-8。AutoCAD 2007+ 可把 DXF 存成 UTF-16，
+    // 这类文件若按 UTF-8 解出是乱码，后续按行扫描的比较会全部失败 → 解析作废。
+    // 这里先按 BOM 解码，命中就直接返回（末尾的 BOM 字符由 parseDxf 自行剥离）。
+    if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+      return new TextDecoder('utf-16le').decode(buf);
+    }
+    if (buf.length >= 2 && buf[0] === 0xfe && buf[1] === 0xff) {
+      return new TextDecoder('utf-16be').decode(buf);
+    }
     const head = buf.slice(0, 8192).toString('latin1');
     const idx = head.indexOf('$DWGCODEPAGE');
     if (idx >= 0) {

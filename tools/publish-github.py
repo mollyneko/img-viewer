@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""把 Rat看图王 推到 GitHub 并发版（幂等可重跑）。
+"""把 RatViewer 推到 GitHub 并发版（幂等可重跑）。
 
 做三件事：
   1. 确保本地是 git 仓库、工作区已提交、origin 指向目标仓库，然后推送 main
@@ -45,7 +45,7 @@ def api(method, url, token, data=None, content_type='application/json', raw=Fals
         'Authorization': 'Bearer ' + token,
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'RatImgViewer-publish',
+        'User-Agent': 'RatViewer-publish',
     }
     body = None
     if data is not None:
@@ -145,12 +145,12 @@ def release_body(version):
         '## Rat 看图王 V{v}\n\n'
         'Windows 10 / 11 x64　·　单文件下载，无需安装运行库\n\n'
         '| 文件 | 说明 |\n|---|---|\n'
-        '| `RatImageViewer-Setup-V{v}.exe` | 安装版：可选安装目录、创建快捷方式、可注册文件关联 |\n'
-        '| `RatImageViewer-Portable-V{v}.exe` | 免安装版：单文件，双击即用，不写注册表 |\n'
+        '| `RatViewer-Setup-V{v}.exe` | 安装版：可选安装目录、创建快捷方式、可注册文件关联 |\n'
+        '| `RatViewer-Portable-V{v}.exe` | 免安装版：单文件，双击即用，不写注册表 |\n'
         '| `SHA256SUMS.txt` | 校验和，核对方式见下方 |\n\n'
         '### 直链\n\n'
-        '- 安装版：{base}/RatImageViewer-Setup-V{v}.exe\n'
-        '- 免安装版：{base}/RatImageViewer-Portable-V{v}.exe\n\n'
+        '- 安装版：{base}/RatViewer-Setup-V{v}.exe\n'
+        '- 免安装版：{base}/RatViewer-Portable-V{v}.exe\n\n'
         '### 本版内容\n\n'
         '- 图片浏览：滚轮缩放 / 适应窗口 / 1:1，多标签，幻灯片，放大镜\n'
         '- 格式：JPG · PNG · WebP · GIF · BMP · ICO · SVG · AVIF · TIFF · PSD/PSB · HEIC · 相机 RAW\n'
@@ -165,7 +165,7 @@ def release_body(version):
         '点「更多信息」→「仍要运行」即可。\n\n'
         '### 校验下载完整性\n\n'
         '```\n'
-        'certutil -hashfile RatImageViewer-Setup-V{v}.exe SHA256\n'
+        'certutil -hashfile RatViewer-Setup-V{v}.exe SHA256\n'
         '```\n'
         '把输出和 `SHA256SUMS.txt` 里对应行对比即可。\n\n'
         '完整说明见 [README](https://github.com/{repo}#readme)。\n'
@@ -316,8 +316,8 @@ def main():
     # --- 2 & 3. Release + assets
     dist = os.path.join(ROOT, 'dist')
     want = [
-        os.path.join(dist, 'RatImageViewer-Setup-V%s.exe' % args.version),
-        os.path.join(dist, 'RatImageViewer-Portable-V%s.exe' % args.version),
+        os.path.join(dist, 'RatViewer-Setup-V%s.exe' % args.version),
+        os.path.join(dist, 'RatViewer-Portable-V%s.exe' % args.version),
     ]
     sums = os.path.join(dist, 'SHA256SUMS.txt')
     files = [p for p in want if os.path.isfile(p)]

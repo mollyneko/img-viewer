@@ -43,6 +43,12 @@ contextBridge.exposeInMainWorld('rat', {
   getTheme: () => ipcRenderer.invoke('theme:get'),
   onSystemTheme: on('system:theme'),
 
+  // ---- 通用配置 / 最近文件夹 ----
+  configGet: () => ipcRenderer.invoke('config:get'),
+  configSet: (patch) => ipcRenderer.invoke('config:set', patch),
+  addRecent: (folder) => ipcRenderer.invoke('fs:addRecent', folder),
+  recentFolders: () => ipcRenderer.invoke('fs:recent'),
+
   // ---- 文件关联 / 默认程序 ----
   assocRegister: () => ipcRenderer.invoke('assoc:register'),
   assocUnregister: () => ipcRenderer.invoke('assoc:unregister'),

@@ -1,6 +1,6 @@
 'use strict';
 
-/* Rat看图王 — 渲染层
+/* RatViewer — 渲染层
    原则：渲染层只负责显示与交互；所有文件系统、解码、注册表操作都走 window.rat (preload)。*/
 
 const R = window.rat;
@@ -72,6 +72,7 @@ const state = {
   playing: false,
   timer: null,
   theme: 'light',
+  slideshowInterval: 2600,
   outDir: null,
   batch: [],
   running: false,
@@ -120,37 +121,58 @@ function go(name) {
   $$('.screen').forEach((s) => s.classList.toggle('on', s.id === 'screen-' + name));
   $$('.rail-btn').forEach((b) => b.classList.toggle('on', b.dataset.go === name));
   $('#app').dataset.screen = name;
-  if (name === 'manage') renderGrid();
+  if (name === 'manage') { renderGrid(); renderRecent(); }
   if (name === 'compare') initCompare();
   if (name === 'batch') renderBatchRows();
 }
 
 // ------------------------------------------------------------------ 打开发
+// 文件夹扫描结果按路径缓存：切换标签时复用，不再每次都重新 scanFolder 整个目录，
+// 也避免把当前文件列表整体覆盖掉（多标签「互不干扰」的前提）。
+const folderCache = new Map();
+async function getFolder(folder) {
+  let c = folderCache.get(folder);
+  if (!c) {
+    const scan = await R.scanFolder(folder);
+    c = { folder, files: scan && scan.files ? scan.files : [] };
+    folderCache.set(folder, c);
+  }
+  return c;
+}
+
+async function addRecent(folder) {
+  try { await R.addRecent(folder); } catch {}
+}
+
 async function openPaths(paths) {
   const list = (paths || []).filter(Boolean);
   if (!list.length) return;
   const first = list[0];
+  const ext = extname(first);
 
   const asDir = await R.scanFolder(first);
   if (asDir && !asDir.error) {
     state.folder = first;
     state.files = asDir.files || [];
     state.index = state.files.length ? 0 : -1;
+    folderCache.set(first, { folder: first, files: state.files });
+    addRecent(first);
   } else {
     const dir = dirname(first);
-    const scan = await R.scanFolder(dir);
+    const c = await getFolder(dir);
     state.folder = dir;
-    state.files = scan && scan.files ? scan.files : [];
+    state.files = c.files;
     const i = state.files.findIndex((f) => samePath(f.path, first));
     if (i >= 0) {
       state.index = i;
     } else {
       state.files = [{
-        path: first, name: basename(first), ext: extname(first), dir,
-        size: 0, mtime: 0, kind: NATIVE_EXT.has(extname(first)) ? 'native' : 'preview',
+        path: first, name: basename(first), ext, dir,
+        size: 0, mtime: 0, kind: NATIVE_EXT.has(ext) ? 'native' : 'preview',
       }];
       state.index = 0;
     }
+    addRecent(dir);
     addTab(first);
   }
 
@@ -263,10 +285,13 @@ async function select(i) {
   }
 
   renderInfo(info);
-  renderExif(f.path);
+  renderExif(f.path, info.exif);
   renderFilm();
   renderTabs();
   updateStatus();
+  // 翻页预取：提前把上一张/下一张（及再外侧两张）的预览/矢量后台准备好，
+  // 来回翻看时基本不用等。矢量图预热较重，跳过以免一次 spawn 太多进程。
+  prefetchNeighbors(state.index);
   $('#previewPill').style.display = info.kind === 'preview' ? '' : 'none';
   if (info.kind === 'preview') {
     $('#previewPill').textContent = '内嵌预览 · ' + (info.previewSource || '');
@@ -325,6 +350,19 @@ function prev() {
 function next() {
   if (!state.files.length) return;
   select((state.index + 1) % state.files.length);
+}
+
+// 翻页预取：把相邻 1–2 张送进 openImage（native 读 EXIF、preview/矢量会顺手预热），
+// 让来回翻看几乎瞬时。矢量图预热要起进程，跳过避免刷图时一次性拉起太多。
+function prefetchNeighbors(i) {
+  const total = state.files.length;
+  if (!total) return;
+  for (const j of [i - 1, i + 1, i - 2, i + 2]) {
+    if (j < 0 || j >= total) continue;
+    const f = state.files[j];
+    if (VECTOR_EXT.has(String(f.ext || '').toLowerCase())) continue;
+    R.openImage(f.path).catch(() => {});
+  }
 }
 
 const EMPTY_HINT_TITLE = '把图片或文件夹拖进来';
@@ -478,6 +516,30 @@ function smallSample(d) {
 
 state.histSource = null;
 
+function drawHist(ctx, W, H, hist) {
+  const { bins, rgb } = hist;
+  const colors = ['rgba(120,130,150,.55)', 'rgba(220,70,80,.45)', 'rgba(60,190,120,.45)', 'rgba(70,130,240,.45)'];
+  const series = [bins, rgb[0], rgb[1], rgb[2]];
+  for (let s = 0; s < series.length; s++) {
+    ctx.beginPath();
+    const src = series[s];
+    const p2 = Math.max(...src, 1);
+    for (let i = 0; i < 64; i++) {
+      const x = (i / 63) * W;
+      const y = H - (src[i] / p2) * (H - 6);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W, H);
+    ctx.lineTo(0, H);
+    ctx.closePath();
+    ctx.fillStyle = colors[s];
+    ctx.fill();
+  }
+}
+
+// 矢量图（CDR/DWG 的 SVG）画到 canvas 后，浏览器出于安全策略禁止 getImageData 回读像素，
+// 所以矢量图的直方图天然不可用 —— 这里把异常兜住，画布显示「无法读取像素」而不是整页报错。
 async function buildHistogram(p) {
   state.histSource = p || null;
   const cv = $('#hist');
@@ -498,14 +560,38 @@ async function buildHistogram(p) {
     ctx.fillText('无法读取像素', 10, H / 2 + 4);
     return;
   }
-  const { ctx: sctx, w, h } = smallSample(d);
-  const data = sctx.getImageData(0, 0, w, h).data;
+  // 同一张图反复翻回时直接复用已算好的直方图，省一次采样
+  if (d.hist) {
+    drawHist(ctx, W, H, d.hist);
+    return;
+  }
+
+  let sw, sh, sctx;
+  try {
+    const s = smallSample(d);
+    sw = s.w; sh = s.h; sctx = s.ctx;
+  } catch (e) {
+    ctx.fillStyle = dark ? '#6c7787' : '#8b93a3';
+    ctx.font = '11px sans-serif';
+    ctx.fillText('无法读取像素', 10, H / 2 + 4);
+    return;
+  }
+
+  let data;
+  try {
+    data = sctx.getImageData(0, 0, sw, sh).data;
+  } catch (e) {
+    ctx.fillStyle = dark ? '#6c7787' : '#8b93a3';
+    ctx.font = '11px sans-serif';
+    ctx.fillText('无法读取像素', 10, H / 2 + 4);
+    return;
+  }
 
   const bins = new Array(64).fill(0);
   const rgb = [new Array(64).fill(0), new Array(64).fill(0), new Array(64).fill(0)];
   let sum = 0;
   let sum2 = 0;
-  const n = w * h;
+  const n = sw * sh;
   for (let i = 0; i < n; i++) {
     const r = data[i * 4];
     const g = data[i * 4 + 1];
@@ -521,26 +607,8 @@ async function buildHistogram(p) {
   const mean = sum / n;
   const std = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
   state.histStats = { mean, std };
-
-  const peak = Math.max(...bins, 1);
-  const colors = ['rgba(120,130,150,.55)', 'rgba(220,70,80,.45)', 'rgba(60,190,120,.45)', 'rgba(70,130,240,.45)'];
-  const series = [bins, rgb[0], rgb[1], rgb[2]];
-  for (let s = 0; s < series.length; s++) {
-    ctx.beginPath();
-    const src = series[s];
-    const p2 = Math.max(...src, 1);
-    for (let i = 0; i < 64; i++) {
-      const x = (i / 63) * W;
-      const y = H - (src[i] / p2) * (H - 6);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.lineTo(W, H);
-    ctx.lineTo(0, H);
-    ctx.closePath();
-    ctx.fillStyle = colors[s];
-    ctx.fill();
-  }
+  d.hist = { bins, rgb, mean, std };
+  drawHist(ctx, W, H, d.hist);
 }
 
 function autoEnhance() {
@@ -588,8 +656,8 @@ function renderInfo(info) {
   $('#kvInfo').innerHTML = kv(rows);
 }
 
-async function renderExif(p) {
-  const e = await R.readExif(p);
+async function renderExif(p, exif) {
+  const e = exif || (await R.readExif(p));
   if (!e) {
     $('#kvExif').innerHTML = '<div class="empty">这个文件没有可读的 EXIF</div>';
     return;
@@ -684,6 +752,8 @@ function renderGrid() {
   const g = $('#grid');
   const size = +$('#mgSize').value;
   g.style.setProperty('--cell', size + 'px');
+  const q = ($('#mgFilter').value || '').trim().toLowerCase();
+
   if (!state.files.length) {
     g.innerHTML = '';
     const d = document.createElement('div');
@@ -693,11 +763,15 @@ function renderGrid() {
     $('#mgCount').textContent = '0 项';
     return;
   }
-  $('#mgCount').textContent = state.files.length + ' 项';
+
+  // 按文件名过滤（大文件夹里也能快速定位）
+  let shown = 0;
   const frag = document.createDocumentFragment();
-  state.files.forEach((f, i) => {
+  state.files.forEach((f, realIdx) => {
+    if (q && !String(f.name || '').toLowerCase().includes(q)) return;
+    shown++;
     const cell = document.createElement('div');
-    cell.className = 'cell' + (i === state.index ? ' on' : '');
+    cell.className = 'cell' + (realIdx === state.index ? ' on' : '');
     const pv = document.createElement('div');
     pv.className = 'pv';
     const img = document.createElement('img');
@@ -723,11 +797,32 @@ function renderGrid() {
     meta.querySelector('.sub span:first-child').textContent = fmtSize(f.size);
     meta.querySelector('.sub span:last-child').textContent = fmtTime(f.mtime).slice(0, 10);
     cell.append(pv, meta);
-    cell.addEventListener('click', () => { select(i); go('view'); });
+    // 用真实索引，过滤后点击才不会选错文件
+    cell.addEventListener('click', () => { select(realIdx); go('view'); });
     frag.appendChild(cell);
   });
   g.innerHTML = '';
   g.appendChild(frag);
+  $('#mgCount').textContent = (q ? shown + ' / ' : '') + state.files.length + ' 项';
+}
+
+// 最近打开的文件夹：从设置读取，点一下直接载入（持久化在 userData）
+async function renderRecent() {
+  const box = $('#mgRecent');
+  if (!box) return;
+  let recent = [];
+  try { recent = await R.recentFolders(); } catch { recent = []; }
+  if (!recent.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  box.style.display = '';
+  box.innerHTML = '<span class="lbl">最近：</span>';
+  recent.forEach((f) => {
+    const chip = document.createElement('button');
+    chip.className = 'recent-chip';
+    chip.textContent = basename(f) || f;
+    chip.title = f;
+    chip.addEventListener('click', () => openPaths([f]));
+    box.appendChild(chip);
+  });
 }
 
 // ------------------------------------------------------------------ 对比
@@ -816,7 +911,7 @@ async function runBatch() {
     return;
   }
   if (!state.outDir) {
-    state.outDir = (state.folder || dirname(state.batch[0].path)) + '\\Rat看图王导出';
+    state.outDir = (state.folder || dirname(state.batch[0].path)) + '\\RatViewer导出';
     $('#bOutDir').textContent = state.outDir;
   }
   const type = $('#bFormat').value;
@@ -825,57 +920,80 @@ async function runBatch() {
   const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
   const outExt = extMap[type] || 'jpg';
 
+  // 预筛：矢量格式（CDR/CMX/DWG/DXF）读不到像素，批量转换对它们没有意义，直接排除
+  const jobs = state.batch
+    .map((f, i) => ({ f, i }))
+    .filter(({ f }) => !VECTOR_EXT.has(String(f.ext || '').toLowerCase()));
+  const skipped = state.batch.length - jobs.length;
+
   state.running = true;
   $('#bRun').disabled = true;
   let okCount = 0;
   let errCount = 0;
+  const usedNames = new Set();
 
-  for (let i = 0; i < state.batch.length; i++) {
-    const f = state.batch[i];
-    setRow(i, 8, '读取…', '', 'run');
-    try {
-      const d = await getDrawable(f.path);
-      if (!d) throw new Error('无法读取像素（可能是需要解码插件的格式）');
-      setRow(i, 34, '转码…', '');
+  // 4 路并发，进度仍逐行刷新（避免大目录串行时一次等很久）
+  const CONC = 4;
+  const worker = async (start) => {
+    for (let k = start; k < jobs.length; k += CONC) {
+      const { f, i } = jobs[k];
+      setRow(i, 8, '读取…', '', 'run');
+      try {
+        const d = await getDrawable(f.path);
+        if (!d) throw new Error('无法读取像素（可能是需要解码插件的格式）');
+        setRow(i, 34, '转码…', '');
 
-      let w = d.w;
-      let h = d.h;
-      if (maxEdge > 0 && Math.max(w, h) > maxEdge) {
-        const k = maxEdge / Math.max(w, h);
-        w = Math.max(1, Math.round(w * k));
-        h = Math.max(1, Math.round(h * k));
+        let w = d.w;
+        let h = d.h;
+        if (maxEdge > 0 && Math.max(w, h) > maxEdge) {
+          const kk = maxEdge / Math.max(w, h);
+          w = Math.max(1, Math.round(w * kk));
+          h = Math.max(1, Math.round(h * kk));
+        }
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        const ctx = c.getContext('2d');
+        if (type === 'image/jpeg') {
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, w, h);
+        }
+        ctx.drawImage(d.img, 0, 0, w, h);
+
+        const blob = await new Promise((res) => c.toBlob(res, type, quality));
+        if (!blob) throw new Error('编码失败');
+        const buf = await blob.arrayBuffer();
+        setRow(i, 76, '写入…', '');
+
+        // 输出名去重：a.PSD 与 a.png 同名都转 jpg 会互相覆盖，碰撞时加序号
+        const stem = basename(f.path).replace(/\.[^.]+$/, '');
+        let name = stem + '.' + outExt;
+        if (usedNames.has(name)) {
+          let n = 2;
+          while (usedNames.has(stem + '_' + n + '.' + outExt)) n++;
+          name = stem + '_' + n + '.' + outExt;
+        }
+        usedNames.add(name);
+        const target = state.outDir + '\\' + name;
+        const wr = await R.writeFile(target, buf);
+        if (!wr.ok) throw new Error(wr.error || '写入失败');
+        okCount++;
+        setRow(i, 100, '完成', fmtSize(wr.bytes), 'done');
+      } catch (e) {
+        errCount++;
+        setRow(i, 100, '失败', String(e.message || e), 'err');
       }
-      const c = document.createElement('canvas');
-      c.width = w;
-      c.height = h;
-      const ctx = c.getContext('2d');
-      if (type === 'image/jpeg') {
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(0, 0, w, h);
-      }
-      ctx.drawImage(d.img, 0, 0, w, h);
-
-      const blob = await new Promise((res) => c.toBlob(res, type, quality));
-      if (!blob) throw new Error('编码失败');
-      const buf = await blob.arrayBuffer();
-      setRow(i, 76, '写入…', '');
-
-      const name = basename(f.path).replace(/\.[^.]+$/, '') + '.' + outExt;
-      const target = state.outDir + '\\' + name;
-      const wr = await R.writeFile(target, buf);
-      if (!wr.ok) throw new Error(wr.error || '写入失败');
-      okCount++;
-      setRow(i, 100, '完成', fmtSize(wr.bytes), 'done');
-    } catch (e) {
-      errCount++;
-      setRow(i, 100, '失败', String(e.message || e), 'err');
     }
-    await new Promise((r) => setTimeout(r, 8));
-  }
+  };
+
+  const runners = [];
+  for (let s = 0; s < CONC; s++) runners.push(worker(s));
+  await Promise.all(runners);
 
   state.running = false;
   $('#bRun').disabled = false;
-  setOp(`批量转换完成：成功 ${okCount}，失败 ${errCount}　→　${state.outDir}`);
+  const tail = skipped ? `，跳过 ${skipped} 个矢量文件` : '';
+  setOp(`批量转换完成：成功 ${okCount}，失败 ${errCount}${tail}　→　${state.outDir}`);
   toast(`批处理完成：成功 ${okCount} 个${errCount ? '，失败 ' + errCount + ' 个' : ''}`, errCount > 0);
 }
 
@@ -1068,7 +1186,7 @@ function togglePlay() {
   $('#btnSlides').classList.toggle('on', state.playing);
   clearInterval(state.timer);
   if (state.playing) {
-    state.timer = setInterval(next, 2600);
+    state.timer = setInterval(next, state.slideshowInterval || 2600);
     setOp('幻灯片放映中（空格或 Esc 退出）');
   } else {
     setOp('已退出放映');
@@ -1093,6 +1211,7 @@ const MENU = [
   ['重置调整', 'i-reset', '', () => resetAdjust()],
   ['sep'],
   ['另存为…', 'i-save', 'Ctrl+S', () => saveAsCurrent()],
+  ['复制图片', 'i-copy', '', () => copyImage()],
   ['复制文件路径', 'i-copy', '', () => copyPath()],
   ['在资源管理器中显示', 'i-folder', '', () => revealCurrent()],
   ['sep'],
@@ -1168,6 +1287,29 @@ async function copyPath() {
   }
 }
 
+// 复制图片本身到剪贴板（不只是路径）。矢量 SVG 可能无法回读到 canvas，会提示失败。
+async function copyImage() {
+  if (!state.meta) return;
+  const d = await getDrawable(state.meta.path);
+  if (!d) {
+    toast('这个格式没有可导出的像素', true);
+    return;
+  }
+  try {
+    const c = document.createElement('canvas');
+    c.width = d.w;
+    c.height = d.h;
+    c.getContext('2d').drawImage(d.img, 0, 0);
+    const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+    if (!blob) throw new Error('编码失败');
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    toast('图片已复制到剪贴板');
+    setOp('图片已复制到剪贴板');
+  } catch {
+    toast('复制失败（此格式或环境不支持）', true);
+  }
+}
+
 function revealCurrent() {
   if (state.meta) R.reveal(state.meta.path);
 }
@@ -1226,6 +1368,7 @@ const KEYS = [
   ['C', '裁剪模式'],
   ['回车', '应用裁剪'],
   ['Esc', '退出裁剪 / 放映'],
+  ['1 / 2 / 3 / 4', '切换屏幕（看图 / 管理 / 对比 / 批量）'],
   ['L', '放大镜'],
   [', / .', '左转 / 右转 90°'],
   ['H / V', '水平 / 垂直翻转'],
@@ -1448,7 +1591,7 @@ function bind() {
     if (r.ok) {
       await refreshAssoc();
       toast(`已注册为候选看图程序（${r.extensions} 个扩展名）`);
-      $('#assocHint').textContent = '下一步：点「② 打开系统默认应用页」，把扩展名逐个选成 Rat看图王。';
+      $('#assocHint').textContent = '下一步：点「② 打开系统默认应用页」，把扩展名逐个选成 RatViewer。';
     } else {
       toast('注册失败：' + (r.error || ''), true);
     }
@@ -1457,7 +1600,7 @@ function bind() {
     const r = await R.assocOpenSettings();
     if (r.ok) {
       toast('已打开系统「默认应用」页面');
-      $('#assocHint').textContent = '在列表里找到「Rat看图王」，把 .jpg / .png 等扩展名逐个指定给它。';
+      $('#assocHint').textContent = '在列表里找到「RatViewer」，把 .jpg / .png 等扩展名逐个指定给它。';
     } else {
       toast('打不开系统设置，请手动搜索「默认应用」', true);
     }
@@ -1494,6 +1637,26 @@ function bind() {
     if (paths.length) openPaths(paths);
   });
 
+  // 窗口尺寸变化（拖拽边缘 / 最大化 / 还原）后重新适应，否则图片会溢出或被留白
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (state.meta && state.meta.width && state.meta.height) fit();
+    }, 120);
+  });
+
+  // 管理屏：文件名搜索框（输入即过滤，大文件夹也能快速定位）
+  const mgf = $('#mgFilter');
+  if (mgf) mgf.addEventListener('input', renderGrid);
+
+  // 幻灯片间隔（设置里改，持久化）
+  const si = $('#slideInterval');
+  if (si) si.addEventListener('change', () => {
+    state.slideshowInterval = +si.value || 2600;
+    R.configSet({ slideshowInterval: state.slideshowInterval }).catch(() => {});
+  });
+
   // 键盘
   window.addEventListener('keydown', onKey);
 
@@ -1511,6 +1674,12 @@ function onKey(e) {
   if (ctrl && e.key.toLowerCase() === 's') { e.preventDefault(); saveAsCurrent(); return; }
   if (ctrl && e.key.toLowerCase() === 'd') { e.preventDefault(); $('#btnTheme').click(); return; }
   if (ctrl && e.key === '1') { e.preventDefault(); oneToOne(); return; }
+  // 数字键 1–4 切换屏幕（看图 / 管理 / 对比 / 批量），与左侧导航一一对应
+  if (!ctrl && e.key >= '1' && e.key <= '4') {
+    e.preventDefault();
+    go(['view', 'manage', 'compare', 'batch'][+e.key - 1]);
+    return;
+  }
   if (ctrl) return;
 
   switch (e.key) {
@@ -1639,6 +1808,16 @@ async function main() {
   // 主进程可能在 did-finish-load 时就推过一次；这里再主动取一次，两边都不会漏
   const pending = await R.pendingPath();
   if (pending) openPaths([pending]);
+
+  // 读取持久化的幻灯片间隔，应用到设置控件
+  try {
+    const cfg = await R.configGet();
+    if (cfg && cfg.slideshowInterval) {
+      state.slideshowInterval = +cfg.slideshowInterval || 2600;
+      const si = $('#slideInterval');
+      if (si) si.value = String(state.slideshowInterval);
+    }
+  } catch {}
 
   updateStage();
   setOp('就绪');

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Rat看图王 · 技术架构与实施方案</title>
+<title>RatViewer · 技术架构与实施方案</title>
 <style>
 :root{
   --bg:#f5f7fa; --panel:#ffffff; --sub:#fafbfd; --sunken:#eef1f6;
@@ -76,7 +76,7 @@ footer{margin-top:22px;color:var(--text-3);font-size:12px;line-height:1.8}
     <svg width="21" height="21" viewBox="0 0 24 24" fill="none"><path d="M4 5.5C4 4.67 4.67 4 5.5 4h13c.83 0 1.5.67 1.5 1.5v13c0 .83-.67 1.5-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="9.5" r="1.6" fill="currentColor"/><path d="M5 17l4.2-4.6 3.1 3 3-3.5L19 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
   </div>
   <div>
-    <h1>Rat看图王 · 技术架构与实施方案</h1>
+    <h1>RatViewer · 技术架构与实施方案</h1>
     <div class="sub">Electron 外壳 + 自研本地解码内核 · 含 CorelDRAW CDR 原生解析</div>
   </div>
   <div class="seg" id="seg">
@@ -310,7 +310,7 @@ ipcMain.handle('core:decode', async (e, path, opts) => {
     实际目录：<code>src/main/</code>（main · preload · scanner · exif · preview · cache · assoc）+
     <code>src/renderer/</code>（index.html · styles.css · app.js）+ <code>build/</code>（图标 · NSIS 钩子）。
   </div>
-  <pre>Rat看图王/
+  <pre>RatViewer/
 ├─ electron/                     主进程（ Electron 28+ ）
 │   ├─ main.ts                   窗口 / 生命周期
 │   ├─ preload.ts                contextBridge 暴露 core API

@@ -1,5 +1,5 @@
 ; ============================================================================
-; Rat看图王 — NSIS 安装钩子
+; RatViewer — NSIS 安装钩子
 ;
 ; 重要前提：Windows 8 之后，系统**不允许**安装程序把某个程序「静默」设成默认打开方式
 ; （微软刻意封死了这条路径，防止软件互相抢关联；这也是为什么很多看图软件装完
@@ -13,26 +13,26 @@
 ; ============================================================================
 
 !macro RAT_OTW EXT
-  WriteRegStr HKCU "Software\Classes\${EXT}\OpenWithProgids" "RatImageViewer.Image" ""
-  WriteRegStr HKCU "Software\RatImageViewer\Capabilities\FileAssociations" "${EXT}" "RatImageViewer.Image"
+  WriteRegStr HKCU "Software\Classes\${EXT}\OpenWithProgids" "RatViewer.Image" ""
+  WriteRegStr HKCU "Software\RatViewer\Capabilities\FileAssociations" "${EXT}" "RatViewer.Image"
   WriteRegStr HKCU "Software\Classes\Applications\${APP_EXECUTABLE_FILENAME}\SupportedTypes" "${EXT}" ""
 !macroend
 
 !macro customInstall
   ; ---- ProgID ----
-  WriteRegStr HKCU "Software\Classes\RatImageViewer.Image" "" "RatImageViewer Image"
-  WriteRegStr HKCU "Software\Classes\RatImageViewer.Image\DefaultIcon" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
-  WriteRegStr HKCU "Software\Classes\RatImageViewer.Image\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
+  WriteRegStr HKCU "Software\Classes\RatViewer.Image" "" "RatViewer Image"
+  WriteRegStr HKCU "Software\Classes\RatViewer.Image\DefaultIcon" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
+  WriteRegStr HKCU "Software\Classes\RatViewer.Image\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
 
   ; ---- 出现在鼠标右键「打开方式」菜单 ----
   WriteRegStr HKCU "Software\Classes\Applications\${APP_EXECUTABLE_FILENAME}\DefaultIcon" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}",0'
   WriteRegStr HKCU "Software\Classes\Applications\${APP_EXECUTABLE_FILENAME}\shell\open\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1"'
 
   ; ---- 出现在「默认应用」页面 ----
-  WriteRegStr HKCU "Software\RatImageViewer\Capabilities" "ApplicationName" "RatImageViewer"
-  WriteRegStr HKCU "Software\RatImageViewer\Capabilities" "ApplicationDescription" "Lightweight high-performance image viewer"
-  WriteRegStr HKCU "Software\RatImageViewer\Capabilities" "ApplicationIcon" "$INSTDIR\${APP_EXECUTABLE_FILENAME},0"
-  WriteRegStr HKCU "Software\RegisteredApplications" "RatImageViewer" "Software\RatImageViewer\Capabilities"
+  WriteRegStr HKCU "Software\RatViewer\Capabilities" "ApplicationName" "RatViewer"
+  WriteRegStr HKCU "Software\RatViewer\Capabilities" "ApplicationDescription" "Lightweight high-performance image viewer"
+  WriteRegStr HKCU "Software\RatViewer\Capabilities" "ApplicationIcon" "$INSTDIR\${APP_EXECUTABLE_FILENAME},0"
+  WriteRegStr HKCU "Software\RegisteredApplications" "RatViewer" "Software\RatViewer\Capabilities"
 
   ; ---- 逐个扩展名登记为候选 ----
   !insertmacro RAT_OTW ".jpg"
@@ -67,35 +67,35 @@
 !macro customUnInstall
   ; 只清我们自己写进去的东西。绝不整键删 Software\RegisteredApplications。
   DeleteRegKey HKCU "Software\Classes\Applications\${APP_EXECUTABLE_FILENAME}"
-  DeleteRegKey HKCU "Software\Classes\RatImageViewer.Image"
-  DeleteRegKey HKCU "Software\RatImageViewer"
-  DeleteRegValue HKCU "Software\RegisteredApplications" "RatImageViewer"
+  DeleteRegKey HKCU "Software\Classes\RatViewer.Image"
+  DeleteRegKey HKCU "Software\RatViewer"
+  DeleteRegValue HKCU "Software\RegisteredApplications" "RatViewer"
 
-  DeleteRegValue HKCU "Software\Classes\.jpg\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.jpeg\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.jfif\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.png\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.apng\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.webp\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.gif\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.bmp\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.ico\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.svg\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.avif\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.tif\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.tiff\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.cdr\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.cmx\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.psd\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.psb\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.heic\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.heif\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.cr2\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.cr3\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.nef\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.arw\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.dng\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.orf\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.rw2\OpenWithProgids" "RatImageViewer.Image"
-  DeleteRegValue HKCU "Software\Classes\.raf\OpenWithProgids" "RatImageViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.jpg\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.jpeg\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.jfif\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.png\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.apng\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.webp\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.gif\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.bmp\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.ico\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.svg\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.avif\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.tif\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.tiff\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.cdr\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.cmx\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.psd\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.psb\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.heic\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.heif\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.cr2\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.cr3\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.nef\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.arw\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.dng\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.orf\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.rw2\OpenWithProgids" "RatViewer.Image"
+  DeleteRegValue HKCU "Software\Classes\.raf\OpenWithProgids" "RatViewer.Image"
 !macroend

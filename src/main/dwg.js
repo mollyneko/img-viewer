@@ -10,7 +10,7 @@ const path = require('node:path');
 const fsp = require('node:fs/promises');
 const crypto = require('node:crypto');
 const parser = require('./dwg-parser');
-const { parseDxf } = require('./dxf-parser');
+const { parseDxf, decodeBuffer } = require('./dxf-parser');
 
 const VECTOR_EXT = new Set(['.dwg', '.dxf']);
 const TIMEOUT_MS = 60_000;               // 大图纸解析上限
@@ -294,7 +294,7 @@ function buildSVG(conv, dark) {
   const w = Math.max(1, b.maxX - b.minX);
   const h = Math.max(1, b.maxY - b.minY);
   const span = Math.max(w, h);
-  const sw = Math.max(span / 1400, span / 1400);   // 线宽 ≈ 千分之一跨度
+  const sw = Math.max(span / 1400, 1);   // 线宽 ≈ 千分之一跨度，且不低于 1px 以免细线在缩略图里消失
   const ptR = span / 400;
   // 内在尺寸封顶，保持纵横比
   const scale = Math.min(1, MAX_SIDE / Math.max(w, h));
@@ -395,22 +395,10 @@ function parseWithTimeout(abs, ext) {
   return Promise.race([job, timeout]).finally(() => clearTimeout(timer));
 }
 
-// DXF 文本编码识别（dxf-parser 内部也有，这里对 Buffer 先行处理）
+// DXF 文本解码：直接复用 dxf-parser 的 decodeBuffer，
+// 这样 DWG/DXF 入口与纯 JS 解析器走同一套编码识别（UTF-8 / UTF-16 BOM / gb18030 / Big5 / 1252）。
 function decodeText(buf) {
-  let enc = 'utf8';
-  try {
-    const head = buf.slice(0, 8192).toString('latin1');
-    const idx = head.indexOf('$DWGCODEPAGE');
-    if (idx >= 0) {
-      const seg = head.slice(idx, idx + 200).split(/\r?\n/).map(s => s.trim());
-      const p = seg.indexOf('3');
-      const cp = p >= 0 ? (seg[p + 1] || '').toUpperCase() : '';
-      if (cp.indexOf('GB') >= 0 || cp.indexOf('936') >= 0) enc = 'gb18030';
-      else if (cp.indexOf('BIG5') >= 0 || cp.indexOf('950') >= 0) enc = 'big5';
-      else if (cp.indexOf('1252') >= 0 || cp === 'ANSI_1252') enc = 'latin1';
-    }
-  } catch { /* ignore */ }
-  return buf.toString(enc);
+  return decodeBuffer(buf);
 }
 
 /**
