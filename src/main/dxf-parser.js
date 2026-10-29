@@ -139,6 +139,20 @@ function parseDxf(text, fileName) {
   const lines = text.split(/\r\n|\r|\n/);
   const n = lines.length;
 
+  // DXF 的行是「组码 / 值」成对出现，组码是整数。AutoCAD、ODA、BricsCAD 等
+  // 主流写入器会把组码右对齐到 3 列（"  0"、" 70"），而下面的扫描全程用
+  // '0' 精确比较组码 —— 带前导空格就一个都匹配不上，整份图纸渲染成空白。
+  // 实测 113 个真实 DXF 样本全部空白，去掉组码行首尾空白后 58 个立刻恢复
+  // （其余是 HATCH/RAY/XLINE 等未实现的图元，与本问题无关）。
+  // 只处理以空白开头的行，避免误伤文本值里本身就有前导空格的字符串。
+  for (let k = 0; k + 1 < n; k += 2) {
+    const s = lines[k];
+    if (s.length > 1) {
+      const c0 = s.charCodeAt(0);
+      if (c0 === 32 || c0 === 9) lines[k] = s.trim();
+    }
+  }
+
   let i = 0;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
 

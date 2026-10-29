@@ -388,11 +388,13 @@ function parseWithTimeout(abs, ext) {
     return { ...(await parser.parseDwg(copy, path.basename(abs))), format: 'DWG' };
   })();
 
-  const timer = setTimeout(() => job.catch(() => {}), TIMEOUT_MS);
-  // job 本身没有取消能力；超时靠 Promise.race 拒绝
-  const timeout = new Promise((_, rej) =>
-    setTimeout(() => rej(new Error(`DWG/DXF 解析超时（${TIMEOUT_MS / 1000}s）`)), TIMEOUT_MS));
-  return Promise.race([job, timeout]).finally(() => clearTimeout(timer));
+  // 注意：超时定时器必须清掉。不清的话它会在事件循环里挂满 60 秒 ——
+  // 每次转换都遗留一个，CLI 跑完还得空等 60 秒才退出（实测能复现）。
+  let killer = null;
+  const timeout = new Promise((_, rej) => {
+    killer = setTimeout(() => rej(new Error(`DWG/DXF 解析超时（${TIMEOUT_MS / 1000}s）`)), TIMEOUT_MS);
+  });
+  return Promise.race([job, timeout]).finally(() => clearTimeout(killer));
 }
 
 // DXF 文本解码：直接复用 dxf-parser 的 decodeBuffer，

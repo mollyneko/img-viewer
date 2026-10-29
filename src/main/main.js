@@ -9,6 +9,7 @@ const { pathToFileURL } = require('node:url');
 const scanner = require('./scanner');
 const exifReader = require('./exif');
 const previewer = require('./preview');
+const tiffReader = require('./tiff');
 const cdr = require('./cdr');
 const dwg = require('./dwg');
 const { DiskCache } = require('./cache');
@@ -142,9 +143,14 @@ async function getPreview(abs, thumbMode) {
   const key = previewKey(abs, thumbMode);
   const hit = IMG_CACHE.get(key);
   if (hit) return hit;
-  const pv = await previewer.extractPreview(abs, {
+  let pv = await previewer.extractPreview(abs, {
     maxBytes: thumbMode ? previewer.THUMB_SCAN_BYTES : previewer.FULL_SCAN_BYTES,
   });
+  // TIFF 的兜底：Chromium 不会解码 TIFF，而绝大多数 TIFF（扫描件、PS 存的
+  // 未压缩/LZW）里没有内嵌 JPEG，靠「挖预览」永远打不开。这里直接自己解码。
+  if (!pv && /\.(tiff?)$/i.test(abs)) {
+    pv = await tiffReader.read(abs).catch(() => null);
+  }
   if (!pv) return null;
   const cost = pv.buffer.length;
   while (IMG_CACHE.size && (IMG_CACHE.size >= IMG_CACHE_MAX || imgCacheBytes + cost > IMG_CACHE_BYTES)) {
@@ -210,7 +216,9 @@ function handleProtocol() {
       const vecTag = scanner.CAD.has(ext)
         ? `|dwg8|${isDarkTheme() ? 'd' : 'l'}`
         : '';
-      const key = cache.key(abs, st.mtimeMs, st.size, 'thumb:' + w + vecTag);
+      // 版本号进键：TIFF 现在走自解码，旧版缓存里存的是「原始 TIFF 字节」
+      // （Chromium 解不开，显示成灰块）。不升版本会一直命中旧结果。
+      const key = cache.key(abs, st.mtimeMs, st.size, 'thumb2:' + w + vecTag);
       const cached = await cache.get(key);
       if (cached) return new Response(cached.data, { headers: thumbHeaders(cached.meta.mime) });
 
@@ -230,11 +238,13 @@ function handleProtocol() {
         } catch {}
       }
 
-      // 其余格式：挖内嵌预览
+      // 其余格式：挖内嵌预览（TIFF 走自解码，产出是 BMP）
       if (!out && isPreview) {
         const pv = await getPreview(abs, true);
         if (pv) {
-          if (pv.mime === 'image/jpeg') {
+          // JPEG / BMP 都能被 nativeImage 读进来，统一缩到目标宽度，
+          // 免得把一张几十 MB 的 BMP 原样丢给渲染层当缩略图。
+          if (pv.mime === 'image/jpeg' || pv.mime === 'image/bmp') {
             try {
               const img = nativeImage.createFromBuffer(pv.buffer);
               if (!img.isEmpty()) {
@@ -739,7 +749,9 @@ function registerIpc() {
       ...base,
       width: pv.width,
       height: pv.height,
-      size: pv.buffer.length,
+      // 注意：size 保持「文件本身的体积」（base 里已有），解码后的字节数
+      // 单独放 previewSize —— 把两者混用会让人以为 14KB 的文件有 750KB。
+      previewSize: pv.buffer.length,
       originalSize: st.size,
     };
   }

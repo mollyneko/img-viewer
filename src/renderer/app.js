@@ -233,8 +233,10 @@ async function select(i) {
   if (!info || !info.ok) {
     state.index = i;
     state.meta = null;
-    renderEmpty();
     const msg = info && info.message ? info.message : '无法打开这个文件';
+    // 别让画布退回「把图片拖进来」——那看起来像什么都没打开。
+    // 明确写清楚是「这个文件打不开」，并把原因带上。
+    renderEmpty('这张图打不开', msg);
     toast(msg, true);
     setOp('打开失败：' + msg);
     renderTabs();
@@ -278,7 +280,9 @@ async function select(i) {
     img.onload = () => {
       const ms = Math.round(performance.now() - t0);
       fit();
-      $('#perfPill').innerHTML = `载入 <b>${ms} ms</b> · ${info.kind === 'preview' ? '内嵌预览' : '原生解码'}`;
+      const how = info.kind !== 'preview' ? '原生解码'
+        : (/解码/.test(info.previewSource || '') ? '本地解码' : '内嵌预览');
+      $('#perfPill').innerHTML = `载入 <b>${ms} ms</b> · ${how}`;
       buildHistogram(f.path);
     };
     img.onerror = () => {
@@ -389,9 +393,9 @@ function setEmptyHint(title, sub) {
   if (s) s.textContent = sub || EMPTY_HINT_SUB;
 }
 
-function renderEmpty() {
+function renderEmpty(hintTitle, hintSub) {
   $('#emptyHint').style.display = '';
-  setEmptyHint();
+  setEmptyHint(hintTitle, hintSub);
   $('#stage').removeAttribute('src');
   $('#dimPill').textContent = '—';
   $('#sizePill').textContent = '—';
@@ -701,7 +705,12 @@ function renderInfo(info) {
     $('#kvInfo').innerHTML = '<div class="empty">未打开图片</div>';
     return;
   }
-  const kindText = m.kind === 'preview' ? `内嵌预览（${m.previewSource || '嵌入图'}）` : '原生解码';
+  const src = m.previewSource || '嵌入图';
+  const kindText = m.kind === 'preview'
+    ? (/解码/.test(src) ? `本地解码（${m.format || ''}）` : `内嵌预览（${src}）`)
+    : m.kind === 'vector' ? '矢量渲染'
+      : m.ok === false ? (m.reason === 'needs-plugin' ? '需要解码插件' : '暂不支持')
+        : '原生解码';
   const rows = [
     ['文件名', m.name, 'wrap'],
     ['格式', (m.format || '') + (m.kind === 'preview' ? ' · 预览' : '')],
@@ -711,8 +720,8 @@ function renderInfo(info) {
     ['读取方式', kindText, 'wrap'],
     ['所在目录', m.dir, 'wrap mono'],
   ];
-  if (m.kind === 'preview' && m.originalSize && m.originalSize !== m.size) {
-    rows.splice(4, 0, ['原文件体积', fmtSize(m.originalSize)]);
+  if (m.kind === 'preview' && m.previewSize) {
+    rows.splice(4, 0, ['解码后体积', fmtSize(m.previewSize)]);
   }
   $('#kvInfo').innerHTML = kv(rows);
 }

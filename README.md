@@ -34,7 +34,7 @@ What makes it different is the stuff other viewers can't open:
 
 - **CDR / CMX** (CorelDRAW) — a built-in libcdr vector engine, so you can view them without CorelDRAW installed, with no font dependency and no blur.
 - **DWG / DXF** (CAD drawings) — LibreDWG built in, so you can read CAD files without AutoCAD.
-- **PSD / PSB, TIFF, HEIC, camera RAW** — it pulls the embedded preview and opens instantly, without waiting for a full parse.
+- **PSD / PSB, HEIC, camera RAW** — it pulls the embedded preview and opens instantly, without waiting for a full parse. TIFF is decoded in-app instead, so plain scans open too.
 
 ## Download & install
 
@@ -42,8 +42,8 @@ Grab the latest build (Windows 10 / 11, 64-bit) from the **[Releases page](https
 
 | File | Type | For |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.0.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.0.exe)** | Installer (NSIS) | Everyday use. Choose the install folder, create desktop/start-menu shortcuts, and register file associations. |
-| **[RatViewer-Portable-V1.0.0.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.0.exe)** | Portable (single file) | Carry it on a USB stick — double-click to run, no registry writes, no leftovers. |
+| **[RatViewer-Setup-V1.0.2.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.2.exe)** | Installer (NSIS) | Everyday use. Choose the install folder, create desktop/start-menu shortcuts, and register file associations. |
+| **[RatViewer-Portable-V1.0.2.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.2.exe)** | Portable (single file) | Carry it on a USB stick — double-click to run, no registry writes, no leftovers. |
 
 > **About the "unknown publisher" warning**
 > The installer isn't code-signed (an EV certificate isn't cheap). On first run Windows SmartScreen may say "Windows protected your PC." Click "More info" → "Run anyway." If that bothers you, you can always [build from source](#build-from-source).
@@ -114,11 +114,11 @@ Three layers: **native decode** → **extract embedded preview** → **vector en
 | BMP / ICO | Native decode | — |
 | AVIF | Native decode | — |
 | SVG | Native decode | Vector, lossless scaling |
-| TIFF / TIF | Extract embedded preview | First page of multi-page |
-| PSD / PSB | Extract embedded preview | Reads Photoshop thumbnail resource |
+| TIFF / TIF | Local decode, built in | Uncompressed, LZW, Deflate, PackBits; JPEG-compressed TIFF isn't supported |
+| PSD / PSB | Extract embedded preview | Requires saving with "Maximize Compatibility" |
 | **CDR / CMX** | Preview + libcdr full vector | Falls back to the vector engine (background render + hot-swap) only when there's no embedded preview |
 | **DWG / DXF** | LibreDWG vector parse | Layers, text, block refs; DXF uses a pure-JS parser that auto-detects gb18030 / Big5 / UTF-16 encoding |
-| HEIC / HEIF | Extract embedded preview | — |
+| HEIC / HEIF | Extract embedded preview | Only works when the file carries a JPEG preview |
 | CR2 / CR3 / NEF / ARW / DNG and other RAW | Extract embedded JPEG preview | Mainstream camera models |
 
 Not yet supported: PDF, AI, EPS, EXR, TGA, JXL (open an issue if you need them).
@@ -178,7 +178,8 @@ src/
     preload.js             #   contextBridge safe bridge
     scanner.js             #   folder scan & prefetch
     exif.js                #   EXIF parsing
-    preview.js             #   embedded preview extraction (PSD/TIFF/HEIC/RAW/CDR)
+    preview.js             #   embedded preview extraction (PSD/HEIC/RAW/CDR)
+    tiff.js                #   built-in TIFF decoder (LZW/Deflate/PackBits)
     cache.js               #   disk cache
     assoc.js               #   file-association registration (HKCU)
     cdr.js                 #   CDR conversion process scheduler
@@ -249,7 +250,7 @@ This project's **own code** is released under the [MIT license](LICENSE). The bu
 
 - **CDR / CMX**（CorelDRAW）—— 内置 libcdr 矢量引擎，不装 CorelDRAW 也能看，无字体依赖、不糊
 - **DWG / DXF**（CAD 图纸）—— 内置 LibreDWG，看图不用开 AutoCAD
-- **PSD / PSB、TIFF、HEIC、相机 RAW** —— 直接抽取内嵌预览，秒开不等解析
+- **PSD / PSB、HEIC、相机 RAW** —— 直接抽取内嵌预览，秒开不等解析；TIFF 由内置解码器直接解，扫描件也能开
 
 ## 下载与安装
 
@@ -257,8 +258,8 @@ This project's **own code** is released under the [MIT license](LICENSE). The bu
 
 | 文件 | 类型 | 适合谁 |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.0.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.0.exe)** | 安装版（NSIS） | 日常使用。可选安装目录、创建桌面/开始菜单快捷方式、支持注册文件关联 |
-| **[RatViewer-Portable-V1.0.0.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.0.exe)** | 免安装版（单文件） | 放 U 盘里随身带，双击即用，不写注册表、不留痕 |
+| **[RatViewer-Setup-V1.0.2.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.2.exe)** | 安装版（NSIS） | 日常使用。可选安装目录、创建桌面/开始菜单快捷方式、支持注册文件关联 |
+| **[RatViewer-Portable-V1.0.2.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.2.exe)** | 免安装版（单文件） | 放 U 盘里随身带，双击即用，不写注册表、不留痕 |
 
 > **关于「未知发布者」警告**
 > 安装包未购买代码签名证书（EV 证书年费不便宜）。首次运行 Windows SmartScreen 会提示"已保护你的电脑"，点「更多信息」→「仍要运行」即可。如果你介意，也可以直接[从源码构建](#从源码构建-1)。Releases 页面同时提供 `SHA256SUMS.txt`，可用 `certutil -hashfile <文件> SHA256` 核对完整性。
@@ -327,11 +328,11 @@ This project's **own code** is released under the [MIT license](LICENSE). The bu
 | BMP / ICO | 内置直解 | — |
 | AVIF | 内置直解 | — |
 | SVG | 内置直解 | 矢量，可无损放大 |
-| TIFF / TIF | 抽取内嵌预览 | 多页取首页 |
-| PSD / PSB | 抽取内嵌预览 | 读 Photoshop 缩略图资源 |
+| TIFF / TIF | 本地解码（内置） | 支持未压缩 / LZW / Deflate / PackBits；JPEG 压缩的 TIFF 不支持 |
+| PSD / PSB | 抽取内嵌预览 | 需保存时勾选「最大兼容」，才有缩略图资源 |
 | **CDR / CMX** | 预览 + libcdr 全量矢量 | 无内嵌预览时才启动矢量引擎后台渲染并热替换 |
 | **DWG / DXF** | LibreDWG 矢量解析 | 支持图层、文字、块参照；DXF 走纯 JS 解析，自动识别 gb18030 / Big5 / UTF-16 编码 |
-| HEIC / HEIF | 抽取内嵌预览 | — |
+| HEIC / HEIF | 抽取内嵌预览 | 仅当文件内带 JPEG 预览时可用 |
 | CR2 / CR3 / NEF / ARW / DNG 等 RAW | 抽取内嵌 JPEG 预览 | 主流相机机型 |
 
 暂不支持：PDF、AI、EPS、EXR、TGA、JXL（有需求可以提 issue）。
@@ -391,7 +392,8 @@ src/
     preload.js             #   contextBridge 安全桥
     scanner.js             #   目录扫描与预取
     exif.js                #   EXIF 解析
-    preview.js             #   内嵌预览抽取（PSD/TIFF/HEIC/RAW/CDR）
+    preview.js             #   内嵌预览抽取（PSD/HEIC/RAW/CDR）
+    tiff.js                #   TIFF 解码器（LZW/Deflate/PackBits）
     cache.js               #   磁盘缓存
     assoc.js               #   文件关联注册（HKCU）
     cdr.js                 #   CDR 转换进程调度
@@ -461,7 +463,7 @@ Electron 33 · 原生 HTML/CSS/JS（渲染层无框架）· libcdr 0.1.9 + libre
 
 - **CDR / CMX**（CorelDRAW）—— 内蔵の libcdr ベクトルエンジンで、CorelDRAW をインストールせずに表示可能。フォント依存なし、にじみなし。
 - **DWG / DXF**（CAD 図面）—— LibreDWG を内蔵。AutoCAD なしで CAD ファイルを読めます。
-- **PSD / PSB、TIFF、HEIC、カメラ RAW** —— 埋め込みプレビューを取り出して即座に開き、全体の解析を待ちません。
+- **PSD / PSB、HEIC、カメラ RAW** —— 埋め込みプレビューを取り出して即座に開き、全体の解析を待ちません。TIFF は内蔵デコーダで直接デコードします。
 
 ## ダウンロードとインストール
 
@@ -469,8 +471,8 @@ Electron 33 · 原生 HTML/CSS/JS（渲染层无框架）· libcdr 0.1.9 + libre
 
 | ファイル | 種類 | 向いている人 |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.0.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.0.exe)** | インストーラー（NSIS） | 日常利用。インストール先の選択、デスクトップ/スタートメニューのショートカット作成、ファイルの関連付けに対応。 |
-| **[RatViewer-Portable-V1.0.0.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.0.exe)** | ポータブル（単一ファイル） | USB メモリに入れて持ち運び。ダブルクリックで実行、レジストリ書き込みなし、跡残しなし。 |
+| **[RatViewer-Setup-V1.0.2.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.2.exe)** | インストーラー（NSIS） | 日常利用。インストール先の選択、デスクトップ/スタートメニューのショートカット作成、ファイルの関連付けに対応。 |
+| **[RatViewer-Portable-V1.0.2.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.2.exe)** | ポータブル（単一ファイル） | USB メモリに入れて持ち運び。ダブルクリックで実行、レジストリ書き込みなし、跡残しなし。 |
 
 > **「発行元が不明」警告について**
 > インストーラーはコード署名されていません（EV 証明書は安くありません）。初回実行時に Windows SmartScreen が「Windows によって PC が保護されました」と表示します。「詳細情報」→「実行」をクリックしてください。気になる場合は[ソースからビルド](#ソースからのビルド)も可能です。Releases ページには `SHA256SUMS.txt` もあり、`certutil -hashfile <ファイル> SHA256` で整合性を確認できます。
@@ -539,11 +541,11 @@ Electron 33 · 原生 HTML/CSS/JS（渲染层无框架）· libcdr 0.1.9 + libre
 | BMP / ICO | ネイティブデコード | — |
 | AVIF | ネイティブデコード | — |
 | SVG | ネイティブデコード | ベクトル、無劣化拡大 |
-| TIFF / TIF | 埋め込みプレビュー抽出 | マルチページは先頭ページ |
-| PSD / PSB | 埋め込みプレビュー抽出 | Photoshop サムネイルリソースを読取 |
+| TIFF / TIF | ローカルデコード（内蔵） | 非圧縮 / LZW / Deflate / PackBits に対応。JPEG 圧縮 TIFF は非対応 |
+| PSD / PSB | 埋め込みプレビュー抽出 | 「最大限の互換性」を有効にして保存したファイルが必要 |
 | **CDR / CMX** | プレビュー + libcdr フルベクトル | 埋め込みプレビューがない場合のみベクトルエンジンへフォールバック |
 | **DWG / DXF** | LibreDWG ベクトル解析 | レイヤー・文字・ブロック参照対応。DXF は gb18030 / Big5 / UTF-16 を自動判定する純 JS パーサー |
-| HEIC / HEIF | 埋め込みプレビュー抽出 | — |
+| HEIC / HEIF | 埋め込みプレビュー抽出 | JPEG プレビューを含むファイルのみ |
 | CR2 / CR3 / NEF / ARW / DNG など RAW | 埋め込み JPEG プレビュー抽出 | 主要なカメラ機種 |
 
 未対応：PDF、AI、EPS、EXR、TGA、JXL（必要なら issue をどうぞ）。
@@ -603,7 +605,8 @@ src/
     preload.js             #   contextBridge セーフブリッジ
     scanner.js             #   フォルダースキャンとプリフェッチ
     exif.js                #   EXIF 解析
-    preview.js             #   埋め込みプレビュー抽出（PSD/TIFF/HEIC/RAW/CDR）
+    preview.js             #   埋め込みプレビュー抽出（PSD/HEIC/RAW/CDR）
+    tiff.js                #   TIFF デコーダ（LZW/Deflate/PackBits）
     cache.js               #   ディスクキャッシュ
     assoc.js               #   ファイル関連付け登録（HKCU）
     cdr.js                 #   CDR 変換プロセススケジューラ
@@ -673,7 +676,7 @@ Electron 33 · プレーン HTML/CSS/JS（レンダラーはフレームワー�
 
 - **CDR / CMX**(CorelDRAW) — 내장된 libcdr 벡터 엔진으로 CorelDRAW를 설치하지 않아도 보고, 폰트 의존성도 없고 번짐도 없습니다.
 - **DWG / DXF**(CAD 도면) — LibreDWG 내장. AutoCAD 없이 CAD 파일을 읽습니다.
-- **PSD / PSB, TIFF, HEIC, 카메라 RAW** — 내장 프리뷰를 꺼내 즉시 열고, 전체 파싱을 기다리지 않습니다.
+- **PSD / PSB, HEIC, 카메라 RAW** — 내장 프리뷰를 꺼내 즉시 열고, 전체 파싱을 기다리지 않습니다. TIFF는 내장 디코더로 직접 디코딩합니다.
 
 ## 다운로드 및 설치
 
@@ -681,8 +684,8 @@ Electron 33 · プレーン HTML/CSS/JS（レンダラーはフレームワー�
 
 | 파일 | 종류 | 대상 |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.0.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.0.exe)** | 설치 프로그램(NSIS) | 일상 사용. 설치 폴더 선택, 바탕화면/시작 메뉴 바로가기 생성, 파일 연결 등록 지원. |
-| **[RatViewer-Portable-V1.0.0.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.0.exe)** | 이식형(단일 파일) | USB에 넣고 휴대. 더블클릭으로 실행, 레지스트리 기록 없음, 흔적 없음. |
+| **[RatViewer-Setup-V1.0.2.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.2.exe)** | 설치 프로그램(NSIS) | 일상 사용. 설치 폴더 선택, 바탕화면/시작 메뉴 바로가기 생성, 파일 연결 등록 지원. |
+| **[RatViewer-Portable-V1.0.2.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.2.exe)** | 이식형(단일 파일) | USB에 넣고 휴대. 더블클릭으로 실행, 레지스트리 기록 없음, 흔적 없음. |
 
 > **"게시자 알 수 없음" 경고에 대하여**
 > 설치 프로그램은 코드 서명이 되어 있지 않습니다(EV 인증서는 저렴하지 않습니다). 첫 실행 시 Windows SmartScreen이 "PC를 보호했습니다"라고 띄웁니다. "자세히 알아보기" → "실행"을 누르세요. 신경 쓰인다면 [소스에서 빌드](#소스에서-빌드)할 수도 있습니다. Releases 페이지에는 `SHA256SUMS.txt`도 있어 `certutil -hashfile <파일> SHA256`로 무결성을 확인할 수 있습니다.
@@ -751,11 +754,11 @@ Electron 33 · プレーン HTML/CSS/JS（レンダラーはフレームワー�
 | BMP / ICO | 네이티브 디코드 | — |
 | AVIF | 네이티브 디코드 | — |
 | SVG | 네이티브 디코드 | 벡터, 손실 없이 확대 |
-| TIFF / TIF | 내장 프리뷰 추출 | 다중 페이지는 첫 페이지 |
-| PSD / PSB | 내장 프리뷰 추출 | Photoshop 썸네일 리소스 읽기 |
+| TIFF / TIF | 로컬 디코딩(내장) | 비압축 / LZW / Deflate / PackBits 지원. JPEG 압축 TIFF는 미지원 |
+| PSD / PSB | 내장 프리뷰 추출 | "최대 호환성" 옵션으로 저장된 파일 필요 |
 | **CDR / CMX** | 프리뷰 + libcdr 전체 벡터 | 내장 프리뷰가 없을 때만 벡터 엔진으로 폴백 |
 | **DWG / DXF** | LibreDWG 벡터 파싱 | 레이어·문자·블록 참조 지원. DXF는 gb18030 / Big5 / UTF-16을 자동 판별하는 순수 JS 파서 |
-| HEIC / HEIF | 내장 프리뷰 추출 | — |
+| HEIC / HEIF | 내장 프리뷰 추출 | JPEG 프리뷰가 들어 있는 파일만 가능 |
 | CR2 / CR3 / NEF / ARW / DNG 등 RAW | 내장 JPEG 프리뷰 추출 | 주요 카메라 기종 |
 
 미지원: PDF, AI, EPS, EXR, TGA, JXL(필요하면 이슈를 주세요).
@@ -815,7 +818,8 @@ src/
     preload.js             #   contextBridge 안전 브리지
     scanner.js             #   폴더 스캔 및 프리페치
     exif.js                #   EXIF 파싱
-    preview.js             #   내장 프리뷰 추출(PSD/TIFF/HEIC/RAW/CDR)
+    preview.js             #   내장 프리뷰 추출(PSD/HEIC/RAW/CDR)
+    tiff.js                #   TIFF 디코더(LZW/Deflate/PackBits)
     cache.js               #   디스크 캐시
     assoc.js               #   파일 연결 등록(HKCU)
     cdr.js                 #   CDR 변환 프로세스 스케줄러

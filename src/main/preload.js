@@ -78,6 +78,6 @@ contextBridge.exposeInMainWorld('rat', {
   // ---- 程序版本（主进程通过 additionalArguments 注入，语义化版本，不含 V 前缀）----
   appVersion: (() => {
     const hit = process.argv.find((a) => a.startsWith('--rat-app-version='));
-    return hit ? hit.slice('--rat-app-version='.length) : '1.0.0';
+    return hit ? hit.slice('--rat-app-version='.length) : '1.0.2';
   })(),
 });
