@@ -4,12 +4,15 @@
  * DWG 解析器（基于 LibreDWG WASM）
  * - 输出与 DXF 解析器完全一致的数据结构，渲染层零改动
  * - WASM 实例懒加载并复用（10MB wasm 只初始化一次）
- * - 支持 LINE/CIRCLE/ARC/ELLIPSE/LWPOLYLINE/POLYLINE(2D,3D)/POINT/TEXT/MTEXT/INSERT(块展开)/SPLINE/SOLID/DIMENSION
+ * - 支持 LINE/CIRCLE/ARC/ELLIPSE/LWPOLYLINE/POLYLINE(2D,3D)/POINT/TEXT/MTEXT/
+ *   INSERT(块展开)/SPLINE/SOLID/3DFACE/DIMENSION/HATCH/RAY/XLINE/MLINE/LEADER
+ * - 线型与线宽按实体的 lineType / lineweight 还原（BYLAYER 回落到图层）
  */
 
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { aciHex } = require('./dxf-parser');
+const { dashFor, lwFactor, clipInfinite, hatchLines, patternByName } = require('./cad-geom');
 
 let libPromise = null;
 let _wasmDir = '';
@@ -95,14 +98,19 @@ function num(v, d) {
 
 function cleanText(s) {
   return String(s == null ? '' : s)
-    .replace(/\\[A-Za-z0-9.|+*^~\\(){}\-]+;?/g, '')   // MTEXT 格式码
-    .replace(/%%[cC]/g, 'Ø')                          // 直径
-    .replace(/%%[dD]/g, '°')                          // 度
-    .replace(/%%[pP]/g, '±')                          // 正负
-    .replace(/%%%/g, '%')
-    .replace(/[{}]/g, '')
-    .replace(/\r/g, '')
-    .trim();
+    // MTEXT 的 \P 是硬回车：先按它切行，再逐行清格式码，否则换行会被当格式码删掉
+    .split(/\\P/)
+    .map((ln) => ln
+      .replace(/\\[A-Za-z0-9.|+*^~\\(){}\-]+;?/g, '')   // MTEXT 格式码
+      .replace(/%%[cC]/g, 'Ø')                          // 直径
+      .replace(/%%[dD]/g, '°')                          // 度
+      .replace(/%%[pP]/g, '±')                          // 正负
+      .replace(/%%%/g, '%')
+      .replace(/[{}]/g, '')
+      .replace(/\r/g, '')
+      .trim())
+    .filter(Boolean)
+    .join('\n');
 }
 
 /* ---------- bulge 弧段细分 ---------- */
@@ -212,7 +220,10 @@ function convertDatabase(db, fileName) {
   function getLayer(name) {
     let L = layerMap.get(name);
     if (!L) {
-      L = { name, colorIndex: 7, color: '#ffffff', visible: true, count: 0, index: layerList.length };
+      L = {
+        name, colorIndex: 7, color: '#ffffff', visible: true, count: 0,
+        index: layerList.length, lineType: '', lineWeight: 29,
+      };
       layerMap.set(name, L);
       layerList.push(L);
     }
@@ -229,18 +240,23 @@ function convertDatabase(db, fileName) {
     if (Number.isFinite(ci) && ci >= 0 && ci <= 255) { L.colorIndex = ci; L.color = aciHex(ci); }
     else if (e.color != null) { L.color = trueColorHex(e.color) || L.color; }
     L.visible = !(e.off === true || e.frozen === true);
+    if (e.lineType) L.lineType = String(e.lineType);
+    const lw = num(e.lineweight, NaN);
+    if (Number.isFinite(lw)) L.lineWeight = lw;
   }
 
   /* ---- 绘制桶 ---- */
   const bucketList = [];
   const bucketMap = new Map();
-  function getBucket(layerIdx, colorHex) {
-    const key = layerIdx + '|' + colorHex;
+  function getBucket(layerIdx, colorHex, dashKey, lwf) {
+    const key = layerIdx + '|' + colorHex + '|' + dashKey + '|' + lwf;
     let B = bucketMap.get(key);
     if (!B) {
       B = {
         layer: layerIdx, color: colorHex,
+        dash: dashKey || null, lw: lwf,
         segs: [], circles: [], arcs: [], polys: [], polyClosed: [], points: [], texts: [],
+        fills: [],
         count: 0
       };
       bucketMap.set(key, B);
@@ -260,6 +276,8 @@ function convertDatabase(db, fileName) {
   }
 
   let totalEntities = 0;
+  // 射线/构造线：需要整张图的包围盒才能裁剪，先记账
+  const pendingRays = [];
 
   function colorOf(ent, layer) {
     const ci = num(ent.colorIndex, 256);
@@ -269,12 +287,115 @@ function convertDatabase(db, fileName) {
     return layer.color;
   }
 
+  // 线型/线宽：实体值优先（BYLAYER/BYBLOCK/空 → 回落到块参照或图层）
+  function styleOf(ent, layer, ctx) {
+    let lt = String(ent.lineType || '').trim();
+    if (!lt || /^(BYLAYER|BYBLOCK)$/i.test(lt)) lt = (ctx && ctx.lt) || layer.lineType || '';
+    const dash = dashFor(lt);
+    let lw = num(ent.lineweight, -1);
+    if (!(lw > 0)) lw = (ctx && ctx.lw != null) ? ctx.lw : layer.lineWeight;
+    return { dash, lw, key: dash ? dash.join(',') : '', lt };
+  }
+
+  // HATCH 边界环：多段线路径直接用顶点；边路径逐条边采样（直线 / 圆弧 / 椭圆）
+  function hatchLoops(ent, m, sc, ro) {
+    const out = [];
+    const paths = ent.boundaryPaths || [];
+    const push = (ring, x, y) => {
+      const X = tx(m, x, y), Y = ty(m, x, y);
+      ring.push(X, Y); upd(X, Y);
+    };
+    for (let pi = 0; pi < paths.length; pi++) {
+      const p = paths[pi];
+      if (!p) continue;
+      const ring = [];
+      if ((num(p.boundaryPathTypeFlag, 0) & 2) && Array.isArray(p.vertices)) {
+        for (const v of p.vertices) {
+          if (!v) continue;
+          push(ring, num(v.x, 0), num(v.y, 0));
+        }
+      } else if (Array.isArray(p.edges)) {
+        for (const e of p.edges) {
+          if (!e) continue;
+          const t = num(e.type, 1);
+          if (t === 1) {
+            const s = e.start || {};
+            push(ring, num(s.x, 0), num(s.y, 0));
+          } else if (t === 2 || t === 3) {
+            const c = e.center || {};
+            const CX = tx(m, num(c.x, 0), num(c.y, 0));
+            const CY = ty(m, num(c.x, 0), num(c.y, 0));
+            let a = num(e.startAngle, 0), b = num(e.endAngle, Math.PI * 2);
+            const ccw = e.isCCW !== false;
+            let sweep = b - a;
+            if (ccw) { while (sweep <= 0) sweep += Math.PI * 2; }
+            else { while (sweep >= 0) sweep -= Math.PI * 2; }
+            const steps = Math.min(72, Math.max(4, Math.ceil(Math.abs(sweep) / 0.25)));
+            if (t === 2) {
+              const r = num(e.radius, 0) * sc;
+              for (let k = 0; k <= steps; k++) {
+                const ang = a + sweep * (k / steps) + ro;
+                ring.push(CX + r * Math.cos(ang), CY + r * Math.sin(ang));
+              }
+            } else {
+              // 椭圆：end 是主轴端点，lengthOfMinorAxis 是短长轴比
+              const mp = e.end || {};
+              const A = Math.hypot(num(mp.x, 1), num(mp.y, 0)) * sc;
+              const Bb = A * num(e.lengthOfMinorAxis, 1);
+              const base = Math.atan2(num(mp.y, 0), num(mp.x, 1)) + ro;
+              for (let k = 0; k <= steps; k++) {
+                const ang = a + sweep * (k / steps);
+                const lx = A * Math.cos(ang), ly = Bb * Math.sin(ang);
+                ring.push(CX + lx * Math.cos(base) - ly * Math.sin(base),
+                  CY + lx * Math.sin(base) + ly * Math.cos(base));
+              }
+            }
+          }
+        }
+      }
+      // 去掉与首点重合的收尾点（填充环由 even-odd 自动闭合）
+      const n2 = ring.length;
+      if (n2 >= 8
+        && Math.abs(ring[n2 - 2] - ring[0]) < 1e-9
+        && Math.abs(ring[n2 - 1] - ring[1]) < 1e-9) {
+        ring.length = n2 - 2;
+      }
+      if (ring.length >= 6) out.push(new Float32Array(ring));
+    }
+    return out;
+  }
+
+  // 图案定义：文件里有几条定义线就画几个方向（ANSI37 这类交叉填充才像样）
+  function hatchDefs(ent) {
+    const lines = ent.definitionLines || [];
+    const defs = [];
+    for (const l of lines) {
+      if (!l || !l.offset) continue;
+      const ox = num(l.offset.x, 0), oy = num(l.offset.y, 0);
+      if (!(Math.abs(ox) + Math.abs(oy) > 1e-9)) continue;
+      defs.push({
+        angle: num(l.angle, Math.PI / 4),
+        ox, oy,
+        bx: l.base ? num(l.base.x, 0) : 0,
+        by: l.base ? num(l.base.y, 0) : 0,
+      });
+      if (defs.length >= 4) break;   // 再多方向只会把画布糊满
+    }
+    if (!defs.length) {
+      const d = patternByName(ent.patternName, num(ent.patternScale, 1));
+      d.angle += num(ent.patternAngle, 0);
+      defs.push(d);
+    }
+    return defs;
+  }
+
   function handleEntity(ent, ctx) {
     if (!ent || !ent.type) return;
     const m = ctx.m;
     const layer = getLayer(String(ent.layer || '0') || '0');
     if (ent.isVisible === false) return;
-    const B = getBucket(layer.index, colorOf(ent, layer));
+    const st = styleOf(ent, layer, ctx);
+    const B = getBucket(layer.index, colorOf(ent, layer), st.key, lwFactor(st.lw));
     const sc = scaleOf(m);
     const ro = rotOf(m);
     const type = String(ent.type).toUpperCase();
@@ -404,7 +525,21 @@ function convertDatabase(db, fileName) {
         B.count++; totalEntities++; layer.count++;
         break;
       }
-      case 'SOLID':
+      case 'SOLID': {
+        // corner3 / corner4 在对角线上互换（同 DXF 语义），按 1-2-3-4 连会打结
+        const cs = [ent.corner1, ent.corner2, ent.corner4, ent.corner3];
+        const pts = [];
+        for (let k = 0; k < 4; k++) {
+          const c = cs[k];
+          if (!c) continue;
+          const X = tx(m, num(c.x, 0), num(c.y, 0)), Y = ty(m, num(c.x, 0), num(c.y, 0));
+          pts.push(X, Y); upd(X, Y);
+        }
+        if (pts.length < 6) break;
+        B.fills.push({ p: new Float32Array(pts), a: 0.9 });
+        B.count++; totalEntities++; layer.count++;
+        break;
+      }
       case '3DFACE': {
         const cs = [ent.corner1, ent.corner2, ent.corner3, ent.corner4];
         const pts = [];
@@ -459,6 +594,101 @@ function convertDatabase(db, fileName) {
         B.count++; totalEntities++; layer.count++;
         break;
       }
+
+      /* ---- 填充 ---- */
+      case 'HATCH': {
+        const loops = hatchLoops(ent, m, sc, ro);
+        if (!loops.length) break;
+        const solid = num(ent.solidFill, 0) === 1
+          || num(ent.gradientFlag, 0) === 1
+          || String(ent.patternName || '').toUpperCase() === 'SOLID';
+        if (solid) {
+          for (const lp of loops) B.fills.push({ p: lp, a: 0.9 });
+        } else {
+          const defs = hatchDefs(ent);
+          let got = 0;
+          for (const def of defs) {
+            const segs = hatchLines(loops, def, { maxLines: Math.max(120, Math.floor(900 / defs.length)) });
+            for (let k = 0; k < segs.length; k++) B.segs.push(segs[k]);
+            got += segs.length;
+          }
+          if (!got) for (const lp of loops) B.fills.push({ p: lp, a: 0.14 });
+        }
+        B.count++; totalEntities++; layer.count++;
+        break;
+      }
+
+      /* ---- 构造类 ---- */
+      case 'RAY':
+      case 'XLINE': {
+        const p = ent.firstPoint || {};
+        const d = ent.unitDirection || { x: 1, y: 0 };
+        const X = tx(m, num(p.x, 0), num(p.y, 0)), Y = ty(m, num(p.x, 0), num(p.y, 0));
+        const DX = m[0] * num(d.x, 1) + m[2] * num(d.y, 0);
+        const DY = m[1] * num(d.x, 1) + m[3] * num(d.y, 0);
+        pendingRays.push({ B, X, Y, DX, DY, both: type === 'XLINE' });
+        B.count++; totalEntities++; layer.count++;
+        break;
+      }
+      case 'MLINE': {
+        // 顶点里存的是每条平行线的斜接偏移（随转角变化），按中心线绘制位置才可靠
+        const vs = ent.vertices || [];
+        if (vs.length < 2) break;
+        const pts = [];
+        for (let k = 0; k < vs.length; k++) {
+          const p = (vs[k] && (vs[k].vertex || vs[k])) || {};
+          const X = tx(m, num(p.x, 0), num(p.y, 0)), Y = ty(m, num(p.x, 0), num(p.y, 0));
+          pts.push(X, Y); upd(X, Y);
+        }
+        B.polys.push(new Float32Array(pts));
+        B.polyClosed.push(0);
+        B.count++; totalEntities++; layer.count++;
+        break;
+      }
+      case 'LEADER': {
+        const vs = ent.vertices || [];
+        if (vs.length < 2) break;
+        const pts = [];
+        for (let k = 0; k < vs.length; k++) {
+          const p = vs[k] || {};
+          const X = tx(m, num(p.x, 0), num(p.y, 0)), Y = ty(m, num(p.x, 0), num(p.y, 0));
+          pts.push(X, Y); upd(X, Y);
+        }
+        B.polys.push(new Float32Array(pts));
+        B.polyClosed.push(0);
+        B.count++; totalEntities++; layer.count++;
+        break;
+      }
+      case 'ACAD_TABLE': {
+        // 表格的单元格内容由块参照展开，转换层只给了行列尺寸 —— 先把表格框线画出来
+        const sp = ent.startPoint || {};
+        const dir = ent.directionVector || { x: 1, y: 0 };
+        const dl = Math.hypot(num(dir.x, 1), num(dir.y, 0)) || 1;
+        const ux = num(dir.x, 1) / dl, uy = num(dir.y, 0) / dl;
+        const vx = -uy, vy = ux;
+        const cols = (ent.columnWidthArr || []).map((v) => num(v, 0));
+        const rows = (ent.rowHeightArr || []).map((v) => num(v, 0));
+        const W = cols.reduce((a, b) => a + b, 0);
+        const H = rows.reduce((a, b) => a + b, 0);
+        if (!(W > 0 && H > 0)) break;
+        const P = (u, v) => {
+          const x = num(sp.x, 0) + ux * u + vx * v;
+          const y = num(sp.y, 0) + uy * u + vy * v;
+          return [tx(m, x, y), ty(m, x, y)];
+        };
+        const line = (a, b) => {
+          B.segs.push(a[0], a[1], b[0], b[1]);
+          upd(a[0], a[1]); upd(b[0], b[1]);
+        };
+        let u = 0;
+        line(P(0, 0), P(0, H));
+        for (let c = 0; c < cols.length; c++) { u += cols[c]; line(P(u, 0), P(u, H)); }
+        let v = 0;
+        line(P(0, 0), P(W, 0));
+        for (let r = 0; r < rows.length; r++) { v += rows[r]; line(P(0, v), P(W, v)); }
+        B.count++; totalEntities++; layer.count++;
+        break;
+      }
       case 'INSERT': {
         const name = String(ent.name || '').trim();
         const blk = blocks.get(name);
@@ -472,7 +702,7 @@ function convertDatabase(db, fileName) {
         M = mul(M, [cs, sn, -sn, cs, 0, 0]);
         M = mul(M, [sx, 0, 0, sy, 0, 0]);
         M = mul(M, [1, 0, 0, 1, -blk.base[0], -blk.base[1]]);
-        const child = { m: mul(m, M), depth: (ctx.depth || 0) + 1 };
+        const child = { m: mul(m, M), depth: (ctx.depth || 0) + 1, lt: st.lt, lw: st.lw };
         if (child.depth > 8) break;
         const col = num(ent.columnCount, 1), row = num(ent.rowCount, 1);
         const csp = num(ent.columnSpacing, 0), rsp = num(ent.rowSpacing, 0);
@@ -499,6 +729,29 @@ function convertDatabase(db, fileName) {
     handleEntity(model[i], root);
   }
 
+  /* ---- 射线 / 构造线：包围盒定型后再裁剪 ---- */
+  if (pendingRays.length) {
+    let box = { minX, minY, maxX, maxY };
+    if (!Number.isFinite(box.minX)) {
+      // 图纸里只有无限长线（没有别的图元可参照）：用基点自己定义一个参考范围
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const r of pendingRays) {
+        if (r.X < x0) x0 = r.X;
+        if (r.X > x1) x1 = r.X;
+        if (r.Y < y0) y0 = r.Y;
+        if (r.Y > y1) y1 = r.Y;
+      }
+      const pad = Math.max(10, Math.hypot(x1 - x0, y1 - y0) * 0.5);
+      box = { minX: x0 - pad, minY: y0 - pad, maxX: x1 + pad, maxY: y1 + pad };
+    }
+    for (const r of pendingRays) {
+      const seg = clipInfinite(r.X, r.Y, r.DX, r.DY, box, r.both);
+      if (seg.length < 4) continue;
+      r.B.segs.push(seg[0], seg[1], seg[2], seg[3]);
+      upd(seg[0], seg[1]); upd(seg[2], seg[3]);
+    }
+  }
+
   /* ---- 整理输出 ---- */
   const buckets = [];
   for (let k = 0; k < bucketList.length; k++) {
@@ -508,13 +761,16 @@ function convertDatabase(db, fileName) {
       layer: B.layer,
       color: B.color,
       count: B.count,
+      dash: B.dash,
+      lw: B.lw,
       segs: new Float32Array(B.segs),
       circles: new Float32Array(B.circles),
       arcs: new Float32Array(B.arcs),
       polys: B.polys,
       polyClosed: new Uint8Array(B.polyClosed),
       points: new Float32Array(B.points),
-      texts: B.texts
+      texts: B.texts,
+      fills: B.fills
     });
   }
 

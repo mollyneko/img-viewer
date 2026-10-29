@@ -245,6 +245,88 @@ input, select { font: inherit; }
 #stage.lens-off { visibility: hidden; }
 #stage.anim { transition: transform .16s cubic-bezier(.2, .7, .3, 1); }
 
+/* CAD 内联 SVG 画布：定位/变换模型与 #stage 完全一致，
+   区别只是内容是可操作的 DOM（图层显隐、坐标拾取都靠它）。 */
+.cad-stage {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform-origin: center center;
+  display: none;
+  pointer-events: none;   /* 图纸本身不该抢鼠标：平移/缩放仍由视口处理 */
+}
+.cad-stage.on { display: block; }
+.cad-stage svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.cad-stage.lens-off { visibility: hidden; }
+.cad-stage.anim { transition: transform .16s cubic-bezier(.2, .7, .3, 1); }
+
+/* 测量/窗口缩放的屏幕空间覆盖层 */
+.cad-overlay {
+  position: absolute; inset: 0; z-index: 6;
+  pointer-events: none; display: none; overflow: visible;
+  color: var(--accent);
+}
+.cad-overlay.on { display: block; }
+.cad-tip {
+  position: absolute; z-index: 7;
+  transform: translate(-50%, -160%);
+  pointer-events: none;
+}
+/* 用 .pill.cad-tip 提高权重：基础 .pill 的 display:inline-flex 在这条规则之后，
+   单写 .cad-tip 会被它盖掉，测量提示就会一直挂在画面上 */
+.pill.cad-tip { display: none; }
+.pill.cad-tip.on { display: inline-flex; }
+.viewport.cad-cross { cursor: crosshair; }
+.viewport.cad-cross.grabbing { cursor: crosshair; }
+.cad-rubber {
+  position: absolute; z-index: 6; display: none;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+}
+.cad-rubber.on { display: block; }
+
+/* CAD 专属控件：只在 DWG/DXF 时出现，其余格式完全不受影响 */
+.cad-only { display: none; }
+.cad-mode .tbtn.cad-only { display: inline-flex; }
+.cad-mode .tsep.cad-only { display: block; }
+.cad-mode .sec.cad-only { display: block; }
+.cad-mode .pill.cad-only { display: inline-flex; }
+/* CAD 模式下没有意义的位图工具 */
+.cad-mode .tbtn.cad-off { display: none; }
+
+/* 图层树 */
+.cad-layers { display: flex; flex-direction: column; gap: 1px; max-height: 214px; overflow-y: auto; }
+.cad-lrow {
+  display: flex; align-items: center; gap: 7px;
+  padding: 3px 4px; border-radius: 6px; font-size: 12px;
+}
+.cad-lrow:hover { background: var(--bg-hover); }
+.cad-sw {
+  width: 10px; height: 10px; flex: 0 0 auto; border-radius: 2px;
+  background: var(--c, var(--text-3));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 28%, transparent);
+}
+.cad-nm {
+  flex: 1 1 auto; min-width: 0; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cad-lrow.off .cad-nm { color: var(--text-3); }
+.cad-lrow.off .cad-sw { opacity: .35; }
+.cad-ct {
+  flex: 0 0 auto; font-size: 10.5px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.cad-eye {
+  flex: 0 0 auto; width: 20px; height: 20px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 5px; background: transparent;
+  color: var(--text-3); cursor: pointer;
+}
+.cad-eye:hover { color: var(--accent); background: var(--bg-elev); }
+.cad-eye .ic { width: 13px; height: 13px; }
+.cad-lrow.off .cad-eye { color: var(--border-2); }
+.cad-note { margin-top: 7px; font-size: 10.5px; line-height: 1.5; }
+
 .empty-hint {
   position: absolute; inset: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center;

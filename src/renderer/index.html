@@ -43,6 +43,9 @@
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
   <symbol id="i-slides" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/></symbol>
+  <symbol id="i-window" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="2" stroke-dasharray="3 2.4"/><path d="M9 9h6v6H9z"/></symbol>
+  <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M3.6 15.2L15.2 3.6l5.2 5.2-11.6 11.6z"/><path d="M7 11.6l2 2M10 8.6l2 2M13 5.6l2 2"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 4.8-9 4.8-9-4.8z"/><path d="M3 12.6l9 4.8 9-4.8"/><path d="M3 17l9 4.8L21 17"/></symbol>
 </defs></svg>
 
 <div class="app" id="app" data-screen="view">
@@ -92,15 +95,18 @@
         <button class="tbtn" id="btnOne" title="实际像素 (Ctrl+1)"><svg class="ic"><use href="#i-one"/></svg>1:1</button>
         <span class="tcount" id="zoomVal">100%</span>
         <div class="tsep"></div>
-        <button class="tbtn icon" id="btnRotL" title="左转 90° (,)"><svg class="ic"><use href="#i-ccw"/></svg></button>
-        <button class="tbtn icon" id="btnRotR" title="右转 90° (.)"><svg class="ic"><use href="#i-cw"/></svg></button>
-        <button class="tbtn icon" id="btnFlipH" title="水平翻转 (H)"><svg class="ic"><use href="#i-fliph"/></svg></button>
-        <button class="tbtn icon" id="btnFlipV" title="垂直翻转 (V)"><svg class="ic"><use href="#i-flipv"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnRotL" title="左转 90° (,)"><svg class="ic"><use href="#i-ccw"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnRotR" title="右转 90° (.)"><svg class="ic"><use href="#i-cw"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnFlipH" title="水平翻转 (H)"><svg class="ic"><use href="#i-fliph"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnFlipV" title="垂直翻转 (V)"><svg class="ic"><use href="#i-flipv"/></svg></button>
         <div class="tsep"></div>
-        <button class="tbtn icon" id="btnCrop" title="裁剪 (C)"><svg class="ic"><use href="#i-crop"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnCrop" title="裁剪 (C)"><svg class="ic"><use href="#i-crop"/></svg></button>
         <button class="tbtn icon" id="btnLens" title="放大镜 (L)"><svg class="ic"><use href="#i-lens"/></svg></button>
-        <button class="tbtn icon" id="btnWand" title="一键美化"><svg class="ic"><use href="#i-wand"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnWand" title="一键美化"><svg class="ic"><use href="#i-wand"/></svg></button>
         <button class="tbtn icon" id="btnReset" title="重置调整"><svg class="ic"><use href="#i-reset"/></svg></button>
+        <div class="tsep cad-only"></div>
+        <button class="tbtn icon cad-only" id="btnCadWin" title="窗口放大：框选一块区域放大 (W)"><svg class="ic"><use href="#i-window"/></svg></button>
+        <button class="tbtn icon cad-only" id="btnMeasure" title="测量距离 (M)"><svg class="ic"><use href="#i-ruler"/></svg></button>
         <div class="tspacer"></div>
         <button class="tbtn" id="btnSlides" title="幻灯片 (空格)"><svg class="ic"><use href="#i-slides"/></svg>放映</button>
         <button class="tbtn icon" id="btnSave" title="另存为 (Ctrl+S)"><svg class="ic"><use href="#i-save"/></svg></button>
@@ -112,7 +118,11 @@
         <div class="viewport" id="viewport">
           <div class="checker" id="stageWrap">
             <img id="stage" alt="" draggable="false" />
+            <div class="cad-stage" id="cadStage"></div>
           </div>
+          <svg class="cad-overlay" id="measureLayer" aria-hidden="true"></svg>
+          <div class="pill cad-tip" id="measureTip"></div>
+          <div class="cad-rubber" id="cadRubber"></div>
           <div class="empty-hint" id="emptyHint">
             <svg class="ic big"><use href="#i-file"/></svg>
             <div class="eh-t">把图片或文件夹拖进来</div>
@@ -152,6 +162,7 @@
             <span class="pill">体积 <b id="sizePill">—</b></span>
           </div>
           <div class="floating float-br">
+            <span class="pill cad-only" id="coordPill" title="光标所在的图纸坐标">X — Y —</span>
             <span class="pill" id="perfPill">—</span>
           </div>
 
@@ -162,6 +173,16 @@
 
         <!-- 右侧信息栏 -->
         <aside class="inspector" id="inspector">
+          <!-- 仅 DWG/DXF：图层树（显隐/独显），样式沿用信息栏的 sec 结构 -->
+          <div class="sec cad-only" id="cadLayerSec">
+            <div class="sec-h">
+              <svg class="ic" style="width:12px;height:12px"><use href="#i-layers"/></svg>图层
+              <button class="mini-btn" id="cadAllOn" title="全部显示">全开</button>
+              <button class="mini-btn" id="cadAllOff" title="全部隐藏">全关</button>
+            </div>
+            <div class="cad-layers" id="cadLayers"></div>
+            <div class="hint cad-note">单击眼睛显隐，双击图层名只看该层</div>
+          </div>
           <div class="sec">
             <div class="sec-h">信息</div>
             <div class="kv" id="kvInfo"></div>

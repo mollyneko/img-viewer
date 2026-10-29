@@ -198,7 +198,13 @@ function handleProtocol() {
       if (!hit) return new Response('no vector', { status: 404 });
       const data = await fsp.readFile(hit.svgPath);
       return new Response(data, {
-        headers: { 'content-type': 'image/svg+xml', 'x-rat-vector': '1' },
+        headers: {
+          'content-type': 'image/svg+xml',
+          'x-rat-vector': '1',
+          // 渲染层要把 SVG 文本取回来内联进 DOM（图层显隐、坐标读数都依赖 DOM），
+          // file:// 页面到 ratfile:// 属跨源，必须带 CORS 头才允许读响应体。
+          'access-control-allow-origin': '*',
+        },
       });
     }
 
@@ -273,12 +279,20 @@ function handleProtocol() {
         }
         let data = await fsp.readFile(hit.svgPath, 'utf8');
         if (ext === '.dwg' || ext === '.dxf') {
-          // DWG 线宽按「内在尺寸/缩略图宽」放大,否则缩到 200px 时细线不可见
+          // DWG 线宽按「内在尺寸/缩略图宽」放大，否则缩到 200px 时细线不可见。
+          // 注意要「等比放大」而不是统一设成一个值：线宽现在按图层/实体分级，
+          // 一律刷成同一个数会把粗细层次抹平（粗轮廓看起来和辅助线一样细）。
           try {
             const vbw = parseFloat((data.match(/viewBox="[-\d.]+ [-\d.]+ ([\d.]+) /) || [])[1] || '0');
-            if (vbw > 0 && w > 0) {
-              const sw = (1.3 * vbw / w).toFixed(2);
-              data = data.replace(/stroke-width="[^"]+"/g, `stroke-width="${sw}"`);
+            const widths = [];
+            data.replace(/stroke-width="([\d.]+)"/g, (mm, v) => { widths.push(parseFloat(v)); return mm; });
+            const wmin = widths.length ? Math.min(...widths.filter((v) => v > 0)) : 0;
+            if (vbw > 0 && w > 0 && wmin > 0) {
+              const k = (1.3 * vbw / w) / wmin;
+              if (k > 1) {
+                data = data.replace(/stroke-width="([\d.]+)"/g,
+                  (mm, v) => `stroke-width="${(parseFloat(v) * k).toFixed(2)}"`);
+              }
             }
           } catch { /* 线宽调整失败就按原样给 */ }
         }
@@ -439,11 +453,20 @@ async function windowProbe() {
         const readStage = () => win.webContents.executeJavaScript(`(() => {
           const img = document.querySelector('#stage');
           const hint = document.querySelector('#emptyHint');
+          const cad = document.querySelector('#cadStage');
           return {
             src: (img.getAttribute('src') || '').slice(0, 40),
             complete: img.complete,
             nw: img.naturalWidth,
             nh: img.naturalHeight,
+            cad: cad ? {
+              on: cad.classList.contains('on'),
+              nodes: cad.querySelectorAll('*').length,
+              layers: document.querySelectorAll('#cadLayers .cad-lrow').length,
+              w: cad.clientWidth, h: cad.clientHeight,
+              size: cad.style.width + 'x' + cad.style.height,
+              visible: getComputedStyle(cad).display,
+            } : null,
             hintShown: hint.style.display !== 'none',
             hintText: (hint.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 60),
             perf: (document.querySelector('#perfPill') || {}).innerText || '',
@@ -468,7 +491,9 @@ async function windowProbe() {
         }
         const st = stageWait > 3000 ? await readStage() : st3;
         out.stage = { ...st, at3s: st3, logs: logs.slice(0, 20) };
-        if (!st.complete || !st.nw) out.ok = false;
+        // CAD 走内联 SVG（#cadStage），位图走 #stage —— 两条链路任一条成立即算过
+        const cadOk = !!(st.cad && st.cad.on && st.cad.nodes > 20 && st.cad.layers > 0);
+        if (!cadOk && (!st.complete || !st.nw)) out.ok = false;
       } catch (e) {
         out.stage = { error: String(e).slice(0, 300) };
         out.ok = false;
@@ -508,6 +533,56 @@ async function windowProbe() {
           if (vr && vr.load !== 'ok') out.ok = false;
         } catch (e) {
           out.vector = { error: String(e).slice(0, 300) };
+          out.ok = false;
+        }
+      }
+      // RAT_PROBE_CAD_TEST=1：CAD 交互自检（图层开关 / 测量 / 窗口放大）
+      if (process.env.RAT_PROBE_CAD_TEST) {
+        try {
+          const r = await win.webContents.executeJavaScript(`(async () => {
+            const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+            const vp = document.querySelector('#viewport');
+            const rect = vp.getBoundingClientRect();
+            const at = (fx, fy) => ({ x: rect.left + rect.width * fx, y: rect.top + rect.height * fy });
+            const md = (el, p) => el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: p.x, clientY: p.y, button: 0 }));
+            const mm = (p) => window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: p.x, clientY: p.y }));
+            const mu = (p) => window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: p.x, clientY: p.y }));
+            const res = {};
+            const stage = document.querySelector('#cadStage');
+            const groups = [...stage.querySelectorAll('g[data-layer]')];
+            res.before = groups.map((g) => g.style.display || 'on');
+            const eye = document.querySelector('#cadLayers .cad-eye');
+            if (eye) { eye.click(); await wait(60); res.afterToggle = groups[0].style.display; eye.click(); await wait(60); res.afterToggle2 = groups[0].style.display || 'on'; }
+            document.querySelector('#cadAllOff').click(); await wait(80);
+            res.allOff = groups.every((g) => g.style.display === 'none');
+            document.querySelector('#cadAllOn').click(); await wait(80);
+            res.allOn = groups.every((g) => g.style.display !== 'none');
+            // 测量
+            document.querySelector('#btnMeasure').click(); await wait(50);
+            const p1 = at(0.35, 0.4), p2 = at(0.65, 0.62);
+            md(vp, p1); mu(p1); await wait(60);
+            md(vp, p2); mu(p2); await wait(80);
+            res.measure = {
+              tip: (document.querySelector('#measureTip').textContent || '').trim(),
+              shown: document.querySelector('#measureTip').classList.contains('on'),
+              lines: document.querySelectorAll('#measureLayer line').length,
+              op: (document.querySelector('#sbOp') || {}).textContent || '',
+            };
+            document.querySelector('#btnMeasure').click(); await wait(40);
+            // 窗口放大
+            const z0 = (document.querySelector('#zoomVal') || {}).textContent;
+            document.querySelector('#btnCadWin').click(); await wait(50);
+            md(vp, at(0.3, 0.3)); mm(at(0.4, 0.4)); mm(at(0.55, 0.55)); mu(at(0.55, 0.55)); await wait(120);
+            res.win = { before: z0, after: (document.querySelector('#zoomVal') || {}).textContent, rubberHidden: !document.querySelector('#cadRubber').classList.contains('on') };
+            document.querySelector('#btnCadWin').click(); await wait(40);
+            res.coord = (document.querySelector('#coordPill') || {}).textContent || '';
+            res.hint = (document.querySelector('#emptyHint') || {}).style.display;
+            return res;
+          })()`);
+          out.cadTest = r;
+          if (!r || !r.allOff || !r.allOn || !(r.measure && r.measure.lines === 1)) out.ok = false;
+        } catch (e) {
+          out.cadTest = { error: String(e).slice(0, 300) };
           out.ok = false;
         }
       }
@@ -779,6 +854,12 @@ function registerIpc() {
           height: r.height,
           cached: r.cached,
           format: r.format,
+          // 图层与视图范围：渲染层用作图层面板与「像素 ↔ 图纸坐标」换算
+          layers: Array.isArray(r.layers) ? r.layers : [],
+          box: r.box || null,
+          cadWidth: r.cadWidth || 0,
+          cadHeight: r.cadHeight || 0,
+          entities: r.entities || 0,
           url: 'ratfile://svg?p=' + encodeURIComponent(abs) + '&t=' + Date.now(),
         };
       }

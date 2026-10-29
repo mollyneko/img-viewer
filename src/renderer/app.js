@@ -77,6 +77,17 @@ const state = {
   batch: [],
   running: false,
   lastOp: '就绪',
+  // CAD（DWG/DXF）专属状态：内联 SVG、图层、图纸坐标范围、测量/框选
+  cad: {
+    on: false,
+    degraded: false,      // 图纸过大退回 <img> 时为 true
+    layers: [],
+    groups: new Map(),
+    box: null,
+    mode: null,           // null | 'measure' | 'win'
+    measure: null,        // { a:{x,y}, b:{x,y}|null }
+    win: null,
+  },
 };
 
 const drawCache = new Map();
@@ -114,6 +125,11 @@ async function setTheme(mode) {
   state.themeMode = mode;
   const r = await R.setTheme(mode);
   applyThemeAttr(!!r.dark);
+  // 图纸线条颜色是「烘」在 SVG 里的（缓存也按主题分键），主题变了必须重新取一份，
+  // 否则深色主题下还是一片深灰线，等于看不见。
+  if (state.cad.on && state.meta && isCadPath(state.meta.path)) {
+    requestVector(state.meta.path).catch(() => {});
+  }
 }
 
 // ------------------------------------------------------------------ 屏幕
@@ -233,6 +249,7 @@ async function select(i) {
   if (!info || !info.ok) {
     state.index = i;
     state.meta = null;
+    setCadMode(false);
     const msg = info && info.message ? info.message : '无法打开这个文件';
     // 别让画布退回「把图片拖进来」——那看起来像什么都没打开。
     // 明确写清楚是「这个文件打不开」，并把原因带上。
@@ -252,6 +269,8 @@ async function select(i) {
   syncAdjustUI();
   exitCrop(true);
   stopLens();
+  // DWG/DXF 才启用 CAD 交互层；其余格式保持原来的位图链路
+  setCadMode(CAD_EXT.has(extname(f.path)));
 
   const img = $('#stage');
   const t0 = performance.now();
@@ -334,6 +353,12 @@ async function requestVector(p) {
   }
   if (!state.meta || !samePath(state.meta.path, p)) return;
 
+  // DWG/DXF 走内联 SVG（可切换图层、可读坐标）；CDR 继续走 <img>
+  if (CAD_EXT.has(ext)) {
+    await showCadVector(p, r);
+    return;
+  }
+
   const img = $('#stage');
   const t0 = performance.now();
   img.onload = () => {
@@ -352,6 +377,405 @@ async function requestVector(p) {
   renderInfo(state.meta);
   setOp('矢量渲染完成' + (r.pages > 1 ? `（共 ${r.pages} 页）` : ''));
 }
+
+/* ============================================================== CAD 看图 */
+// 思路参考 cad.js：把「一张图纸」当成可管理的场景，而不是一张扁平位图。
+// 解析结果按图层分组输出成 SVG → 视口负责缩放/平移/框选放大 →
+// 右侧图层树可整层开关，光标落在哪儿就报哪儿的图纸坐标，还能拉一条测量线。
+// 全部是「读」的能力，不碰其它格式的显示链路。
+
+const isCadPath = (p) => CAD_EXT.has(extname(p));
+const MAX_INLINE_SVG = 12 * 1024 * 1024;   // 再大内联会让主线程卡顿，退回 <img>
+
+function setCadMode(on) {
+  state.cad.on = !!on;
+  state.cad.degraded = false;
+  document.body.classList.toggle('cad-mode', !!on);
+  resetCad();
+}
+
+function resetCad() {
+  state.cad.layers = [];
+  state.cad.groups = new Map();
+  state.cad.box = null;
+  state.cad.measure = null;
+  state.cad.mode = null;
+  const st = $('#cadStage');
+  st.classList.remove('on', 'anim', 'lens-off');
+  st.replaceChildren();
+  st.style.width = '';
+  st.style.height = '';
+  const svg = $('#measureLayer');
+  svg.classList.remove('on');
+  svg.replaceChildren();
+  $('#measureTip').classList.remove('on');
+  $('#cadRubber').classList.remove('on');
+  $('#cadLayers').innerHTML = '';
+  $('#btnMeasure').classList.remove('on');
+  $('#btnCadWin').classList.remove('on');
+  $('#viewport').classList.remove('cad-cross');
+}
+
+// 把主进程转好的 SVG 内联进页面。只有内联成 DOM，图层显隐/坐标拾取才有落点。
+async function showCadVector(p, r) {
+  const meta = state.meta;
+  const stage = $('#cadStage');
+  const t0 = performance.now();
+
+  let text = null;
+  if (Array.isArray(r.layers) && r.layers.length) {
+    try {
+      const res = await fetch(r.url);
+      if (res.ok) text = await res.text();
+    } catch (e) {
+      noteError('cad', e && e.message ? e.message : e, 'showCadVector');
+    }
+  }
+  if (text && text.length > MAX_INLINE_SVG) text = null;
+
+  let node = null;
+  if (text) {
+    try {
+      const doc = new DOMParser().parseFromString(text, 'image/svg+xml');
+      const root = doc && doc.documentElement;
+      if (!root || root.nodeName.toLowerCase() !== 'svg' || doc.querySelector('parsererror')) {
+        throw new Error('svg parse');
+      }
+      root.setAttribute('width', '100%');
+      root.setAttribute('height', '100%');
+      node = document.importNode(root, true);
+    } catch (e) {
+      noteError('cad', e && e.message ? e.message : e, 'showCadVector.parse');
+      node = null;
+    }
+  }
+
+  // 兜底：图纸过大 / 内联失败 → 仍然用 <img> 显示，只是没有图层与坐标能力
+  if (!node) {
+    const img = $('#stage');
+    img.onload = () => {
+      const ms = Math.round(performance.now() - t0);
+      // 这里必须自己收提示：上面的正常分支才收，兜底分支漏了就会「画上去了却一直
+      // 显示矢量渲染中」，看起来像卡死。
+      $('#emptyHint').style.display = 'none';
+      fit();
+      $('#perfPill').innerHTML = `矢量 <b>${ms} ms</b> · ${Math.round(r.width)}×${Math.round(r.height)}`;
+      buildHistogram(p);
+    };
+    img.onerror = () => {
+      setEmptyHint('矢量渲染失败', 'SVG 加载失败，请重试');
+    };
+    img.src = r.url;
+    stage.classList.remove('on');
+    stage.replaceChildren();
+    state.cad.layers = Array.isArray(r.layers) ? r.layers : [];
+    state.cad.groups = new Map();
+    state.cad.box = r.box || null;
+    state.cad.degraded = true;
+    meta.cadBox = r.box || null;
+    meta.cadLayers = state.cad.layers.length;
+    meta.cadEntities = r.entities || 0;
+    renderCadLayers();
+    // 图层数与图元数要跟着刷新，否则信息面板会停留在解析前的「—」
+    renderInfo(meta);
+    updateStatus();
+    return;
+  }
+
+  state.cad.degraded = false;
+  meta.width = Math.round(r.width) || meta.width;
+  meta.height = Math.round(r.height) || meta.height;
+  state.cad.box = r.box || null;
+  state.cad.layers = r.layers || [];
+  state.cad.measure = null;
+  state.cad.mode = null;
+  meta.cadBox = r.box || null;
+  meta.cadLayers = state.cad.layers.length;
+  meta.cadEntities = r.entities || 0;
+
+  stage.style.width = meta.width + 'px';
+  stage.style.height = meta.height + 'px';
+  stage.replaceChildren(node);
+  stage.classList.add('on');
+  $('#stage').removeAttribute('src');
+  $('#emptyHint').style.display = 'none';
+
+  bindCadGroups(node);
+  renderCadLayers();
+
+  const ms = Math.round(performance.now() - t0);
+  fit();
+  $('#perfPill').innerHTML = `矢量 <b>${ms} ms</b> · ${meta.width}×${meta.height} · ${state.cad.layers.length} 层`;
+  $('#previewPill').textContent = '矢量渲染 · ' + (r.format || 'DWG');
+  $('#previewPill').style.display = '';
+  renderInfo(meta);
+  updateStatus();
+  buildHistogram(p);
+}
+
+function bindCadGroups(root) {
+  const map = new Map();
+  const groups = root.querySelectorAll('g[data-layer]');
+  for (let k = 0; k < groups.length; k++) {
+    const g = groups[k];
+    const i = g.getAttribute('data-layer');
+    map.set(i, g);
+    const L = state.cad.layers[Number(i)];
+    // 属性 display="none" 会盖住 style.display=''，统一收拢成内联样式，状态才好改
+    g.removeAttribute('display');
+    g.style.display = (L && L.visible === false) ? 'none' : '';
+  }
+  state.cad.groups = map;
+}
+
+// ---- 图层树 ----
+function layerOn(i) {
+  const g = state.cad.groups.get(String(i));
+  if (!g) return !!(state.cad.layers[i] && state.cad.layers[i].visible !== false);
+  return g.style.display !== 'none';
+}
+
+function setLayerVisible(i, on) {
+  const g = state.cad.groups.get(String(i));
+  if (g) g.style.display = on ? '' : 'none';
+  const row = $('#cadLayers').querySelector(`.cad-lrow[data-i="${i}"]`);
+  if (row) {
+    row.classList.toggle('off', !on);
+    const eye = row.querySelector('.cad-eye');
+    if (eye) eye.title = on ? '隐藏此图层' : '显示此图层';
+  }
+  if (state.cad.measure) drawMeasure();
+}
+
+function toggleLayer(i) {
+  if (state.cad.degraded) return;
+  setLayerVisible(i, !layerOn(i));
+  setOp(`图层「${state.cad.layers[i].name}」已${layerOn(i) ? '显示' : '隐藏'}`);
+}
+
+function soloLayer(i) {
+  if (state.cad.degraded) return;
+  for (let k = 0; k < state.cad.layers.length; k++) setLayerVisible(k, k === i);
+  setOp(`只显示图层「${state.cad.layers[i].name}」`);
+}
+
+function allLayers(on) {
+  if (state.cad.degraded) return;
+  for (let k = 0; k < state.cad.layers.length; k++) setLayerVisible(k, on);
+  setOp(on ? '已显示全部图层' : '已隐藏全部图层');
+}
+
+function renderCadLayers() {
+  const box = $('#cadLayers');
+  box.innerHTML = '';
+  const list = state.cad.layers || [];
+  if (state.cad.degraded) {
+    box.innerHTML = '<div class="hint">图纸过大，已关闭图层交互（仍可正常缩放查看）</div>';
+    return;
+  }
+  for (let i = 0; i < list.length; i++) {
+    const L = list[i];
+    const row = document.createElement('div');
+    const on = layerOn(i) && L.visible !== false;
+    row.className = 'cad-lrow' + (on ? '' : ' off');
+    row.dataset.i = String(i);
+    const sw = document.createElement('span');
+    sw.className = 'cad-sw';
+    sw.style.setProperty('--c', L.color || '#9aa4b2');
+    const nm = document.createElement('span');
+    nm.className = 'cad-nm';
+    nm.textContent = L.name;
+    nm.title = L.name;
+    const ct = document.createElement('span');
+    ct.className = 'cad-ct';
+    ct.textContent = L.count ? String(L.count) : '';
+    const eye = document.createElement('button');
+    eye.className = 'cad-eye';
+    eye.title = on ? '隐藏此图层' : '显示此图层';
+    eye.innerHTML = '<svg class="ic"><use href="#i-eye"/></svg>';
+    eye.addEventListener('click', (e) => { e.stopPropagation(); toggleLayer(i); });
+    row.addEventListener('dblclick', () => soloLayer(i));
+    row.append(sw, nm, ct, eye);
+    box.appendChild(row);
+  }
+}
+
+// ---- 图纸坐标 ----
+// SVG 的 viewBox 就是图纸坐标范围；把它和「图像像素」对上，就能在两者之间来回换算。
+function cadUnitAt(cx, cy) {
+  const m = state.meta;
+  const box = state.cad.box;
+  if (!state.cad.on || !m || !box || !m.width || !m.height) return null;
+  const img = imageRect();
+  const px = (cx - img.left) / state.view.z;
+  const py = (cy - img.top) / state.view.z;
+  if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
+  return {
+    x: box.minX + (px / m.width) * (box.maxX - box.minX),
+    y: box.maxY - (py / m.height) * (box.maxY - box.minY),
+    px, py,
+  };
+}
+
+function cadScreenAt(x, y) {
+  const m = state.meta;
+  const box = state.cad.box;
+  if (!m || !box) return { x: 0, y: 0 };
+  const img = imageRect();
+  const px = (x - box.minX) / (box.maxX - box.minX) * m.width;
+  const py = (box.maxY - y) / (box.maxY - box.minY) * m.height;
+  return { x: img.left + px * state.view.z, y: img.top + py * state.view.z };
+}
+
+function fmtUnit(v) {
+  const a = Math.abs(v);
+  if (a >= 1000) return v.toFixed(1);
+  if (a >= 1) return v.toFixed(2);
+  return v.toFixed(3);
+}
+
+function updateCoord(cx, cy) {
+  const el = $('#coordPill');
+  if (!state.cad.on) return;
+  const u = cadUnitAt(cx, cy);
+  el.textContent = u ? `X ${fmtUnit(u.x)}  Y ${fmtUnit(u.y)}` : 'X — Y —';
+}
+
+// ---- 测量 ----
+function drawMeasure() {
+  const svg = $('#measureLayer');
+  const tip = $('#measureTip');
+  if (!svg) return;
+  const on = !!state.cad.on;
+  svg.classList.toggle('on', on);
+  const ms = state.cad.measure;
+  if (!on || !ms) {
+    if (svg.firstChild) svg.replaceChildren();
+    tip.classList.remove('on');
+    return;
+  }
+  const { w, h } = vpSize();
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('width', String(Math.round(w)));
+  svg.setAttribute('height', String(Math.round(h)));
+
+  const a = cadScreenAt(ms.a.x, ms.a.y);
+  const b = ms.b ? cadScreenAt(ms.b.x, ms.b.y) : null;
+  const parts = [];
+  if (b) {
+    parts.push(`<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" stroke="currentColor" stroke-width="1.5" stroke-dasharray="6 4"/>`);
+    parts.push(`<circle cx="${b.x.toFixed(1)}" cy="${b.y.toFixed(1)}" r="3.5" fill="currentColor"/>`);
+  }
+  parts.push(`<circle cx="${a.x.toFixed(1)}" cy="${a.y.toFixed(1)}" r="3.5" fill="currentColor"/>`);
+  svg.innerHTML = parts.join('');
+
+  if (b) {
+    const dx = ms.b.x - ms.a.x, dy = ms.b.y - ms.a.y;
+    const d = Math.hypot(dx, dy);
+    const ang = Math.atan2(dy, dx) * 180 / Math.PI;
+    tip.innerHTML = `距离 <b>${fmtUnit(d)}</b> · ΔX ${fmtUnit(Math.abs(dx))} ΔY ${fmtUnit(Math.abs(dy))} · ${ang.toFixed(1)}°`;
+    tip.style.left = ((a.x + b.x) / 2) + 'px';
+    tip.style.top = Math.min(a.y, b.y) + 'px';
+    tip.classList.add('on');
+  } else {
+    tip.classList.remove('on');
+  }
+}
+
+function toggleMeasure() {
+  if (!state.cad.on) return;
+  const next = state.cad.mode === 'measure' ? null : 'measure';
+  state.cad.mode = next;
+  state.cad.measure = null;
+  stopWinZoom();
+  $('#btnMeasure').classList.toggle('on', next === 'measure');
+  $('#viewport').classList.toggle('cad-cross', !!next);
+  drawMeasure();
+  setOp(next ? '测量：点两个点量距离（Esc 退出）' : '已退出测量');
+}
+
+function measureClick(cx, cy) {
+  const u = cadUnitAt(cx, cy);
+  if (!u) return;
+  const cur = state.cad.measure;
+  if (!cur || cur.b) {
+    state.cad.measure = { a: u, b: null };
+  } else {
+    state.cad.measure = { a: cur.a, b: u };
+    const d = Math.hypot(u.x - cur.a.x, u.y - cur.a.y);
+    setOp(`测量结果：${fmtUnit(d)}（Esc 清除）`);
+  }
+  drawMeasure();
+}
+
+// ---- 窗口放大（框选一块区域铺满视口）----
+function stopWinZoom() {
+  $('#cadRubber').classList.remove('on');
+  if (state.cad.mode === 'win') state.cad.mode = null;
+  $('#btnCadWin').classList.remove('on');
+  $('#viewport').classList.remove('cad-cross');
+  state.cad.win = null;
+}
+
+function toggleWinZoom() {
+  if (!state.cad.on) return;
+  const next = state.cad.mode === 'win' ? null : 'win';
+  state.cad.mode = next;
+  if (next !== 'measure') { $('#btnMeasure').classList.remove('on'); }
+  $('#btnCadWin').classList.toggle('on', next === 'win');
+  $('#viewport').classList.toggle('cad-cross', !!next);
+  $('#cadRubber').classList.remove('on');
+  setOp(next ? '窗口放大：拖一个框（Esc 退出）' : '已退出窗口放大');
+}
+
+function winZoomStart(cx, cy) {
+  state.cad.win = { x0: cx, y0: cy, x1: cx, y1: cy };
+  const el = $('#cadRubber');
+  el.style.left = cx + 'px';
+  el.style.top = cy + 'px';
+  el.style.width = '0px';
+  el.style.height = '0px';
+  el.classList.add('on');
+}
+
+function winZoomMove(cx, cy) {
+  const w = state.cad.win;
+  if (!w) return;
+  w.x1 = cx;
+  w.y1 = cy;
+  const el = $('#cadRubber');
+  el.style.left = Math.min(w.x0, w.x1) + 'px';
+  el.style.top = Math.min(w.y0, w.y1) + 'px';
+  el.style.width = Math.abs(w.x1 - w.x0) + 'px';
+  el.style.height = Math.abs(w.y1 - w.y0) + 'px';
+}
+
+function winZoomEnd() {
+  const w = state.cad.win;
+  $('#cadRubber').classList.remove('on');
+  state.cad.win = null;
+  if (!w || !state.meta) return;
+  const dw = Math.abs(w.x1 - w.x0);
+  const dh = Math.abs(w.y1 - w.y0);
+  if (dw < 12 || dh < 12) return;          // 误点当作没发生
+  const { w: vw, h: vh } = vpSize();
+  const img = imageRect();
+  const z = state.view.z;
+  // 选区换算到「图像像素」坐标
+  const ix = (Math.min(w.x0, w.x1) - img.left) / z;
+  const iy = (Math.min(w.y0, w.y1) - img.top) / z;
+  const iw = dw / z;
+  const ih = dh / z;
+  const nz = clamp(Math.min(vw / iw, vh / ih), 0.02, 200);
+  const m = state.meta;
+  state.view.z = nz;
+  state.view.tx = -((ix + iw / 2) - m.width / 2) * nz;
+  state.view.ty = -((iy + ih / 2) - m.height / 2) * nz;
+  updateStage();
+  setOp('已放大选区');
+}
+
+/* ============================================================ CAD 看图结束 */
 
 function prev() {
   if (!state.files.length) return;
@@ -401,6 +825,8 @@ function renderEmpty(hintTitle, hintSub) {
   $('#sizePill').textContent = '—';
   $('#fmtPill').textContent = '—';
   $('#zoomVal').textContent = '—';
+  setCadMode(false);
+  $('#coordPill').textContent = 'X — Y —';
 }
 
 // ------------------------------------------------------------------ 视图变换
@@ -422,9 +848,17 @@ function updateStage(anim) {
   }
   // -50%,-50% 先把图中心对齐到视口中心(#stage 被 absolute 定位在 50%/50%),
   // 之后 tx/ty 就是「图中心相对视口中心的偏移」—— 与 zoomAt/imageRect 的模型一致
-  img.style.transform = `translate(-50%, -50%) translate(${v.tx}px, ${v.ty}px) scale(${v.z}) rotate(${v.rot}deg) scale(${v.sx}, ${v.sy})`;
+  const tf = `translate(-50%, -50%) translate(${v.tx}px, ${v.ty}px) scale(${v.z}) rotate(${v.rot}deg) scale(${v.sx}, ${v.sy})`;
+  img.style.transform = tf;
+  // CAD 的内联 SVG 画布与位图共用同一套变换，切图层/读坐标才不会错位
+  const cadEl = $('#cadStage');
+  if (cadEl) {
+    cadEl.classList.toggle('anim', !!anim);
+    cadEl.style.transform = tf;
+  }
   $('#zoomVal').textContent = Math.round(v.z * 100) + '%';
   if (state.crop.on) drawCrop();   // 缩放/平移后重算裁剪框位置
+  if (state.cad.on) drawMeasure(); // 测量线与图纸同步缩放
 }
 
 function vpSize() {
@@ -708,18 +1142,27 @@ function renderInfo(info) {
   const src = m.previewSource || '嵌入图';
   const kindText = m.kind === 'preview'
     ? (/解码/.test(src) ? `本地解码（${m.format || ''}）` : `内嵌预览（${src}）`)
-    : m.kind === 'vector' ? '矢量渲染'
+    : m.kind === 'vector' ? (isCadPath(m.path) ? '矢量解析（DWG/DXF）' : '矢量渲染')
       : m.ok === false ? (m.reason === 'needs-plugin' ? '需要解码插件' : '暂不支持')
         : '原生解码';
+  // 图纸用「图纸单位」标尺寸：SVG 的内在像素（2048px 之类）对用户没有意义
+  const box = m.cadBox;
+  const isCad = isCadPath(m.path);
+  const dimText = isCad && box
+    ? `${fmtUnit(box.maxX - box.minX)} × ${fmtUnit(box.maxY - box.minY)} 单位`
+    : (m.width && m.height ? `${m.width} × ${m.height}` : '—');
   const rows = [
     ['文件名', m.name, 'wrap'],
     ['格式', (m.format || '') + (m.kind === 'preview' ? ' · 预览' : '')],
-    ['尺寸', m.width && m.height ? `${m.width} × ${m.height}` : '—'],
+    ['尺寸', dimText],
     ['体积', fmtSize(m.size)],
     ['修改时间', fmtTime(m.mtime)],
     ['读取方式', kindText, 'wrap'],
     ['所在目录', m.dir, 'wrap mono'],
   ];
+  if (isCad && m.cadLayers != null) {
+    rows.splice(3, 0, ['图层', String(m.cadLayers)], ['图元', String(m.cadEntities || 0)]);
+  }
   if (m.kind === 'preview' && m.previewSize) {
     rows.splice(4, 0, ['解码后体积', fmtSize(m.previewSize)]);
   }
@@ -754,8 +1197,15 @@ function updateStatus() {
     return;
   }
   const pos = `${state.index + 1} / ${state.files.length}`;
-  $('#sbFile').textContent = `${m.name}　·　${m.width && m.height ? m.width + '×' + m.height : '—'}　·　${fmtSize(m.size)}　·　${pos}`;
+  const box = m.cadBox;
+  const dim = box
+    ? `${fmtUnit(box.maxX - box.minX)}×${fmtUnit(box.maxY - box.minY)}`
+    : (m.width && m.height ? m.width + '×' + m.height : '—');
+  $('#sbFile').textContent = `${m.name}　·　${dim}　·　${fmtSize(m.size)}　·　${pos}`;
   $('#navCount').textContent = pos;
+  // 左下角「尺寸」小药丸同步成图纸单位
+  $('#dimPill').textContent = dim;
+  if (m.size) $('#sizePill').textContent = fmtSize(m.size);
 }
 
 // ------------------------------------------------------------------ 胶片条
@@ -1283,6 +1733,7 @@ function stopLens() {
   $('#viewLens').classList.remove('show');
   $('#btnLens').classList.remove('on');
   $('#stage').classList.remove('lens-off');
+  $('#cadStage').classList.remove('lens-off');
 }
 
 function toggleLens() {
@@ -1291,6 +1742,7 @@ function toggleLens() {
   $('#viewLens').classList.toggle('show', state.lens);
   $('#btnLens').classList.toggle('on', state.lens);
   $('#stage').classList.toggle('lens-off', state.lens);
+  $('#cadStage').classList.toggle('lens-off', state.lens);
   setOp(state.lens ? '放大镜已开启（移动鼠标查看，L 关闭）' : '放大镜已关闭');
 }
 
@@ -1614,6 +2066,16 @@ function bind() {
   let panRaf = 0;
   vp.addEventListener('mousedown', (e) => {
     if (e.button !== 0 || state.crop.on || state.lens) return;
+    // CAD 的「测量」「窗口放大」要吃掉这次按下，否则会变成平移
+    if (state.cad.on && (state.cad.mode === 'measure' || state.cad.mode === 'win')) {
+      const r = vp.getBoundingClientRect();
+      const cx = e.clientX - r.left;
+      const cy = e.clientY - r.top;
+      if (state.cad.mode === 'measure') measureClick(cx, cy);
+      else winZoomStart(cx, cy);
+      e.preventDefault();
+      return;
+    }
     dragging = true;
     lastX = e.clientX;
     lastY = e.clientY;
@@ -1622,9 +2084,13 @@ function bind() {
   window.addEventListener('mousemove', (e) => {
     // 只有开着放大镜时才需要量视口。原来无条件 getBoundingClientRect()，
     // 等于每次鼠标移动都强制同步布局一次 —— 高回报率鼠标下这是纯浪费。
-    if (state.lens) {
-      const r = vp.getBoundingClientRect();
-      moveLens(e.clientX - r.left, e.clientY - r.top);
+    const needRect = state.lens || state.cad.on;
+    let rect = null;
+    if (needRect) rect = vp.getBoundingClientRect();
+    if (state.lens) moveLens(e.clientX - rect.left, e.clientY - rect.top);
+    if (state.cad.on) {
+      updateCoord(e.clientX - rect.left, e.clientY - rect.top);
+      if (state.cad.win) winZoomMove(e.clientX - rect.left, e.clientY - rect.top);
     }
     if (!dragging) return;
     state.view.tx += e.clientX - lastX;
@@ -1637,11 +2103,14 @@ function bind() {
     }
   });
   window.addEventListener('mouseup', () => {
+    if (state.cad.win) winZoomEnd();
     dragging = false;
     vp.classList.remove('grabbing');
     if (panRaf) { cancelAnimationFrame(panRaf); panRaf = 0; updateStage(); }
   });
   vp.addEventListener('dblclick', () => {
+    // 图纸没有「1:1 像素」的概念，双击统一回适应
+    if (state.cad.on) { fit(); return; }
     if (Math.abs(state.view.z - 1) < 0.02) fit();
     else oneToOne();
   });
@@ -1662,6 +2131,12 @@ function bind() {
 
   // 放大镜
   $('#btnLens').addEventListener('click', toggleLens);
+
+  // CAD 专属：窗口放大 / 测量 / 图层
+  $('#btnCadWin').addEventListener('click', toggleWinZoom);
+  $('#btnMeasure').addEventListener('click', toggleMeasure);
+  $('#cadAllOn').addEventListener('click', () => allLayers(true));
+  $('#cadAllOff').addEventListener('click', () => allLayers(false));
 
   // 调整
   ['#adjBright', '#adjContrast', '#adjSat'].forEach((id) =>
@@ -1849,17 +2324,29 @@ function onKey(e) {
     case '+': case '=': e.preventDefault(); zoomAt(1.2); break;
     case '-': e.preventDefault(); zoomAt(1 / 1.2); break;
     case 'f': case 'F': fit(); break;
-    case 'c': case 'C': state.crop.on ? exitCrop() : enterCrop(); break;
+    case 'c': case 'C': if (state.cad.on) break; state.crop.on ? exitCrop() : enterCrop(); break;
     case 'l': case 'L': toggleLens(); break;
-    case 'h': case 'H': flip('h'); break;
-    case 'v': case 'V': flip('v'); break;
-    case ',': rotate(-90); break;
-    case '.': rotate(90); break;
+    case 'w': case 'W': if (!state.cad.on) break; e.preventDefault(); toggleWinZoom(); break;
+    case 'm': case 'M': if (!state.cad.on) break; e.preventDefault(); toggleMeasure(); break;
+    case 'h': case 'H': if (state.cad.on) break; flip('h'); break;
+    case 'v': case 'V': if (state.cad.on) break; flip('v'); break;
+    case ',': if (state.cad.on) break; rotate(-90); break;
+    case '.': if (state.cad.on) break; rotate(90); break;
     case 'Delete': trashCurrent(); break;
     case ' ': e.preventDefault(); togglePlay(); break;
     case 'Enter': if (state.crop.on) applyCrop(); break;
     case 'Escape':
-      if (state.crop.on) exitCrop();
+      if (state.cad.measure || state.cad.mode === 'win') {
+        state.cad.measure = null;
+        state.cad.mode = null;
+        $('#btnMeasure').classList.remove('on');
+        $('#cadRubber').classList.remove('on');
+        $('#btnCadWin').classList.remove('on');
+        $('#viewport').classList.remove('cad-cross');
+        state.cad.win = null;
+        drawMeasure();
+        setOp('已清除测量');
+      } else if (state.crop.on) exitCrop();
       else if (state.lens) stopLens();
       else if (state.playing) togglePlay();
       else hideCtx();

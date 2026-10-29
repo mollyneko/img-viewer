@@ -5,8 +5,13 @@
  * - 纯 JS、零依赖
  * - 单次线性扫描，分组码直读，无正则
  * - 输出几何体为类型化数组（Float32Array），可零拷贝转移给渲染进程
- * - 支持：LINE / CIRCLE / ARC / LWPOLYLINE / POLYLINE+VERTEX / ELLIPSE / POINT / TEXT / MTEXT / INSERT(块展开)
+ * - 支持：LINE / CIRCLE / ARC / LWPOLYLINE / POLYLINE+VERTEX / ELLIPSE / POINT /
+ *   TEXT / MTEXT / INSERT(块展开) / HATCH / SOLID / 3DFACE / RAY / XLINE /
+ *   MLINE / LEADER / SPLINE
+ * - 按 6(线型) / 370(线宽) 组码还原虚线样式与相对线宽
  */
+
+const { dashFor, lwFactor, clipInfinite, hatchLines, patternByName } = require('./cad-geom');
 
 /* ============================ 颜色（AutoCAD ACI） ============================ */
 
@@ -169,7 +174,10 @@ function parseDxf(text, fileName) {
   function getLayer(name) {
     let L = layerMap.get(name);
     if (!L) {
-      L = { name, colorIndex: 7, visible: true, count: 0, index: layerList.length };
+      L = {
+        name, colorIndex: 7, visible: true, count: 0, index: layerList.length,
+        lineType: '', lineWeight: 29,
+      };
       layerMap.set(name, L);
       layerList.push(L);
     }
@@ -177,16 +185,18 @@ function parseDxf(text, fileName) {
   }
   getLayer('0');
 
-  /* ---- 绘制桶（按 图层+颜色 分组，渲染时可整桶批量描边） ---- */
+  /* ---- 绘制桶（按 图层+颜色+线型+线宽 分组，渲染时可整桶批量描边） ---- */
   const bucketList = [];
   const bucketMap = new Map();
-  function getBucket(layerIdx, colorIdx) {
-    const key = layerIdx + '|' + colorIdx;
+  function getBucket(layerIdx, colorIdx, dashKey, lwf) {
+    const key = layerIdx + '|' + colorIdx + '|' + dashKey + '|' + lwf;
     let B = bucketMap.get(key);
     if (!B) {
       B = {
         layer: layerIdx,
         color: aciHex(colorIdx),
+        dash: dashKey || null,   // SVG stroke-dasharray（相对线宽单位，见 dwg.js）
+        lw: lwf,                 // 相对线宽系数
         segs: [],      // Float32 对：[x1,y1,x2,y2,...]  （LINE）
         circles: [],   // [cx,cy,r]
         arcs: [],      // [cx,cy,r,a0,a1]
@@ -194,6 +204,7 @@ function parseDxf(text, fileName) {
         polyClosed: [],// Uint8 配对
         points: [],    // [x,y]
         texts: [],     // {x,y,h,rot,s}
+        fills: [],     // {p:Float32Array 闭合环, a:不透明度}
         count: 0
       };
       bucketMap.set(key, B);
@@ -202,15 +213,36 @@ function parseDxf(text, fileName) {
     return B;
   }
 
+  // 线型 / 线宽解析：实体值优先，BYLAYER/BYBLOCK 回落到块参照或图层
+  function styleOf(g, layer, ctx) {
+    let lt = String(g['6'] || '').trim();
+    if (!lt || /^BYLAYER$/i.test(lt) || /^BYBLOCK$/i.test(lt)) {
+      lt = (ctx && ctx.lt) || layer.lineType || '';
+    }
+    const dash = dashFor(lt);
+    let lw = parseInt(g['370'], 10);
+    if (!Number.isFinite(lw) || lw < 0) {
+      lw = (ctx && ctx.lw != null) ? ctx.lw : layer.lineWeight;
+    }
+    return { dash, lw, key: dash ? dash.join(',') : '', lt };
+  }
   /* ---- 读取一组属性，直到下一个组码 0 ---- */
-  const REPEAT = { '10': 1, '20': 1, '30': 1, '11': 1, '21': 1, '31': 1, '42': 1 };
-  function readGroups() {
+  // 92/93 也要累积：HATCH 的每条边界路径各有一组（路径类型标志 + 顶点/边数），
+  // 只有拿到全部才能把「外轮廓 + 岛」拆成多个独立环 —— 否则岛屿会被连成一圈蝴蝶结。
+  // 10~13 / 20~23 都是点坐标：SOLID / TRACE 用到第三、四个角（12,22 / 13,23），
+  // 漏登记就会被当成标量字符串，而 g[code][0] 取到的是字符串首字符（"27.9..." → '2'）。
+  const REPEAT = { '10': 1, '20': 1, '30': 1, '11': 1, '21': 1, '31': 1, '12': 1, '22': 1, '13': 1, '23': 1, '42': 1, '92': 1, '93': 1 };
+  function readGroups(type) {
     const g = Object.create(null);
+    // HATCH 的边界参数是「按边重复」的，必须按出现顺序还原；其余实体不需要，
+    // 只给 HATCH 留一份扁平序列（[code, value, code, value, ...]），体量可忽略。
+    const seq = type === 'HATCH' ? [] : null;
     while (i + 1 < n) {
       const c = lines[i];
       if (c === '0') break;
       const v = lines[i + 1];
       i += 2;
+      if (seq) seq.push(c, v);
       if (REPEAT[c]) {
         const f = parseFloat(v);
         if (g[c]) g[c].push(f); else g[c] = [f];
@@ -218,6 +250,7 @@ function parseDxf(text, fileName) {
         g[c] = v;
       }
     }
+    if (seq) g.__seq = seq;
     return g;
   }
 
@@ -257,6 +290,248 @@ function parseDxf(text, fileName) {
   /* ---- 实体处理 ---- */
   const blocks = new Map();
   let totalEntities = 0;
+  // 射线/构造线要等所有几何点收完、算出包围盒后才能裁剪，先暂存
+  const pendingRays = [];
+
+  // HATCH 边界：按 92(路径类型) / 93(点数) 逐条路径拆环。
+  // 兼容两种写法：多段线路径（顶点直存）与直线边路径（每段的起点即顶点）。
+  // HATCH 边界必须按「组码出现顺序」解析：10/20 在这一个实体里同时充当
+  //   ① AcDbHatch 的标高点（第一组，永远在最前）
+  //   ② 边界顶点 / 边路径里各边的关键点（直线的起终点、圆弧的圆心）
+  //   ③ 98 之后的种子点
+  // 而 40/50/51/72/73 是按边重复出现的参数，用「按码累加的数组」无法还原
+  // 它们与边的对应关系（多段线路径和边路径还会互相打乱下标）。所以只对 HATCH
+  // 额外保留一份有序组码，逐条路径、逐条边地重建环。
+  function loopFromPolyline(o) {
+    const pts = [];
+    const n = o.length;
+    for (let k = 0; k < n; k++) {
+      pts.push(o[k].x, o[k].y);
+      if (n > 1 && Math.abs(o[k].b) > 1e-9) {
+        const j = (k + 1) % n;
+        pushBulge(pts, o[k].x, o[k].y, o[j].x, o[j].y, o[k].b);
+      }
+    }
+    return pts;
+  }
+
+  function arcInto(pts, cx, cy, r, a0, a1, ccw) {
+    if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(r) || r <= 0) return false;
+    let d0 = Number.isFinite(a0) ? a0 : 0;
+    let d1 = Number.isFinite(a1) ? a1 : d0 + 360;
+    if (Math.abs(d1 - d0) < 1e-9) d1 = d0 + 360;          // 起止相同 = 整圆
+    if (ccw === false || ccw === 0) { while (d1 >= d0) d1 -= 360; }
+    else { while (d1 <= d0) d1 += 360; }
+    const sweep = (d1 - d0) * Math.PI / 180;
+    const step = Math.min(Math.PI / 9, Math.abs(sweep) / 4);   // 最多 20° 一段
+    const nSeg = Math.max(4, Math.ceil(Math.abs(sweep) / step));
+    for (let k = 0; k <= nSeg; k++) {
+      const a = d0 * Math.PI / 180 + sweep * (k / nSeg);
+      pts.push(cx + r * Math.cos(a), cy + r * Math.sin(a));
+    }
+    return true;
+  }
+
+  function loopFromEdges(edges) {
+    const pts = [];
+    for (const e of edges) {
+      const t = e.type | 0;
+      if (t === 2) {
+        // 圆弧边：中心 10/20、半径 40、起止角 50/51、方向 73
+        arcInto(pts, e.x, e.y, e.r, e.a0, e.a1, e.ccw);
+      } else if (t === 3 && Number.isFinite(e.ex) && Number.isFinite(e.ey)) {
+        // 椭圆弧边：中心 10/20、长轴端点 11/21、短长比 40、起止角 50/51
+        const ax = e.ex - e.x, ay = e.ey - e.y;
+        const R = Math.hypot(ax, ay);
+        const r2 = R * (Number.isFinite(e.r) ? e.r : 1);
+        const rot = Math.atan2(ay, ax);
+        let d0 = Number.isFinite(e.a0) ? e.a0 : 0;
+        let d1 = Number.isFinite(e.a1) ? e.a1 : d0 + 360;
+        if (Math.abs(d1 - d0) < 1e-9) d1 = d0 + 360;
+        if (e.ccw === 0) { while (d1 >= d0) d1 -= 360; } else { while (d1 <= d0) d1 += 360; }
+        const sweep = (d1 - d0) * Math.PI / 180;
+        const nSeg = Math.max(4, Math.ceil(Math.abs(sweep) / (Math.PI / 18)));
+        for (let k = 0; k <= nSeg; k++) {
+          const a = d0 * Math.PI / 180 + sweep * (k / nSeg);
+          const px = R * Math.cos(a), py = r2 * Math.sin(a);
+          pts.push(e.x + px * Math.cos(rot) - py * Math.sin(rot),
+            e.y + px * Math.sin(rot) + py * Math.cos(rot));
+        }
+      } else {
+        // 直线边（以及无法细分的样条边）：起点 → 终点。相邻边的终点会与下一
+        // 条边的起点重合，所以这里只补终点，起点由前一条边带来。
+        if (Number.isFinite(e.x) && Number.isFinite(e.y)) pts.push(e.x, e.y);
+        if (Number.isFinite(e.ex) && Number.isFinite(e.ey)) pts.push(e.ex, e.ey);
+      }
+    }
+    return pts;
+  }
+
+  function hatchLoopsFromSeq(seq) {
+    const paths = [];
+    let cur = null, edge = null;
+    for (let i = 0; i < seq.length; i += 2) {
+      const code = seq[i], v = seq[i + 1];
+      const nv = parseFloat(v);
+      if (code === '92') {
+        cur = { flag: parseInt(v, 10) | 0, objs: [], edges: [] };
+        paths.push(cur); edge = null;
+        continue;
+      }
+      if (!cur) continue;                       // 还在标高/公共头里
+      if (code === '75' || code === '76' || code === '98') { cur = null; edge = null; continue; }
+      if (code === '72') {
+        if (cur.flag & 2) continue;              // 多段线路径：72 只是 hasBulge 标记
+        edge = { type: parseInt(v, 10) | 0 };
+        cur.edges.push(edge);
+        continue;
+      }
+      if (edge) {
+        switch (code) {
+          case '10': edge.x = nv; break;
+          case '20': edge.y = nv; break;
+          case '11': edge.ex = nv; break;
+          case '21': edge.ey = nv; break;
+          case '40': edge.r = nv; break;
+          case '50': edge.a0 = nv; break;
+          case '51': edge.a1 = nv; break;
+          case '73': edge.ccw = nv; break;
+          default: break;
+        }
+        continue;
+      }
+      switch (code) {
+        case '10': cur.objs.push({ x: nv, y: 0, b: 0 }); break;
+        case '20': if (cur.objs.length) cur.objs[cur.objs.length - 1].y = nv; break;
+        case '42': if (cur.objs.length) cur.objs[cur.objs.length - 1].b = nv; break;
+        default: break;
+      }
+    }
+    const loops = [];
+    for (const p of paths) {
+      let pts = null;
+      if ((p.flag & 2) && p.objs.length) pts = loopFromPolyline(p.objs);
+      else if (p.edges.length) pts = loopFromEdges(p.edges);
+      else if (p.objs.length >= 3) pts = loopFromPolyline(p.objs);
+      if (pts && pts.length >= 6) loops.push(pts);
+    }
+    return loops;
+  }
+
+  // 没有有序组码时的兜底：按 92/93 拆环，顶点只取 10/20 的有效区间。
+  function hatchLoopsFromDict(g) {
+    const xs = g['10'] || [];
+    const ys = g['20'] || [];
+    const n0 = Math.min(xs.length, ys.length);
+    if (n0 < 3) return [];
+
+    const flags = g['92'] || null;
+    const counts = g['93'] || null;
+    let total = 0;
+    if (Array.isArray(counts)) {
+      for (let p = 0; p < counts.length; p++) total += Math.max(0, Math.round(Number(counts[p]) || 0));
+    }
+    const seeds = Math.max(0, Math.round(Number(g['98']) || 0));
+    const cut = n0 - seeds;
+    let start = (total && cut === total) ? 0 : 1;
+    let n = cut - start;
+    if (n < 3) { start = 0; n = cut; }
+    if (n < 3) return [];
+
+    const chunks = [];
+    if (Array.isArray(flags) && Array.isArray(counts) && flags.length === counts.length) {
+      let at = 0;
+      for (let p = 0; p < counts.length; p++) {
+        const c = Math.max(0, Math.round(Number(counts[p]) || 0));
+        if (!c) break;
+        chunks.push({ start: start + at, count: c });
+        at += c;
+      }
+      if (at !== n) chunks.length = 0;
+    }
+    if (!chunks.length) chunks.push({ start, count: n });
+
+    const out = [];
+    for (const c of chunks) {
+      if (c.count < 3 || c.start + c.count > n0) continue;
+      const pts = [];
+      for (let k = 0; k < c.count; k++) pts.push(xs[c.start + k], ys[c.start + k]);
+      out.push(pts);
+    }
+    return out;
+  }
+
+  function hatchLoops(g, m) {
+    const seq = g.__seq;
+    let raw = seq ? hatchLoopsFromSeq(seq) : null;
+    if (!raw || !raw.length) raw = hatchLoopsFromDict(g);
+    const loops = [];
+    for (const src of raw) {
+      const pts = new Float32Array(src.length);
+      for (let k = 0; k < src.length; k += 2) {
+        const X = tx(m, src[k], src[k + 1]), Y = ty(m, src[k], src[k + 1]);
+        pts[k] = X; pts[k + 1] = Y;
+        upd(X, Y);
+      }
+      loops.push(pts);
+    }
+    return loops;
+  }
+
+  // 图案定义线：78 之后按 (53 角度, 43/44 基点, 45/46 偏移, 79+49* 虚线) 重复。
+  // 组码字典会把每一条都覆盖掉，只有按顺序读才能拿到多方向图案（ANSI32/33、NET…）。
+  function hatchDefsFromSeq(seq) {
+    let at = -1, nDef = 0;
+    for (let i = 0; i < seq.length; i += 2) {
+      const c = seq[i];
+      if (c === '98') break;                  // 种子点在图案定义之后，别越过去
+      if (c === '78') { nDef = parseInt(seq[i + 1], 10) | 0; at = i + 2; break; }
+    }
+    if (nDef <= 0 || at < 0) return [];
+    const defs = [];
+    let cur = null, dashes = 0;
+    for (let i = at; i + 1 < seq.length && defs.length < 8; i += 2) {
+      const c = seq[i], v = seq[i + 1];
+      if (c === '98' || c === '75' || c === '47') break;
+      if (c === '53') {
+        cur = { angle: (parseFloat(v) || 0) * Math.PI / 180, bx: 0, by: 0, ox: 0, oy: 0, dash: null };
+        defs.push(cur); dashes = 0;
+        continue;
+      }
+      if (!cur) continue;
+      if (c === '43') cur.bx = parseFloat(v) || 0;
+      else if (c === '44') cur.by = parseFloat(v) || 0;
+      else if (c === '45') cur.ox = parseFloat(v) || 0;
+      else if (c === '46') cur.oy = parseFloat(v) || 0;
+      else if (c === '79') { dashes = parseInt(v, 10) | 0; if (dashes > 0) cur.dash = []; }
+      else if (c === '49' && cur.dash && cur.dash.length < dashes) cur.dash.push(parseFloat(v) || 0);
+    }
+    return defs.filter((d) => Math.hypot(d.ox, d.oy) > 1e-9);
+  }
+
+  // 样条：对控制点做 Catmull-Rom 采样。DXF 里的 SPLINE 不带可用的 NURBS 权重时，
+  // 这比「直接连折线」自然得多，也不会像 NURBS 那样在病态节点下炸开。
+  function catmullRom(pts, out, closed) {
+    const n = pts.length / 2;
+    if (n < 3) { for (let i = 0; i < pts.length; i++) out.push(pts[i]); return; }
+    const at = (i) => {
+      if (closed) return ((i % n) + n) % n;
+      return Math.min(n - 1, Math.max(0, i));
+    };
+    for (let i = 0; i < (closed ? n : n - 1); i++) {
+      const p0 = at(i - 1) * 2, p1 = at(i) * 2, p2 = at(i + 1) * 2, p3 = at(i + 2) * 2;
+      for (let s = 0; s < 8; s++) {
+        const t = s / 8, t2 = t * t, t3 = t2 * t;
+        for (let c = 0; c < 2; c++) {
+          out.push(0.5 * ((2 * pts[p1 + c]) + (-pts[p0 + c] + pts[p2 + c]) * t
+            + (2 * pts[p0 + c] - 5 * pts[p1 + c] + 4 * pts[p2 + c] - pts[p3 + c]) * t2
+            + (-pts[p0 + c] + 3 * pts[p1 + c] - 3 * pts[p2 + c] + pts[p3 + c]) * t3));
+        }
+      }
+    }
+    const last = (closed ? 0 : (n - 1)) * 2;
+    out.push(pts[last], pts[last + 1]);
+  }
 
   function handleEntity(type, g, ctx) {
     if (!g) return;
@@ -269,7 +544,8 @@ function parseDxf(text, fileName) {
     if (ci < 0) ci = 0;
     if (ci > 255) ci = 255;
 
-    const B = getBucket(layer.index, ci);
+    const st = styleOf(g, layer, ctx);
+    const B = getBucket(layer.index, ci, st.key, lwFactor(st.lw));
     const sc = scaleOf(m);
     const ro = rotOf(m);
 
@@ -378,7 +654,11 @@ function parseDxf(text, fileName) {
         const X = tx(m, x, y), Y = ty(m, x, y);
         let s = g['1'] || g['3'] || '';
         if (Array.isArray(s)) s = s.join('');
-        s = String(s).replace(/\\[A-Za-z0-9.|]+;?/g, '').replace(/[{}]/g, '').trim();
+        // \P 是 MTEXT 的硬回车：先转成 \n 再清格式码，否则换行会被当格式码吃掉
+        s = String(s).split(/\\P/).map((ln) => ln
+          .replace(/\\[A-Za-z0-9.|]+;?/g, '')
+          .replace(/[{}]/g, '')
+          .trim()).filter(Boolean).join('\n');
         s = s.replace(/%%[cC]/g, 'Ø').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/%%%/g, '%');
         if (s) {
           const h = (parseFloat(g['40']) || 2.5) * sc;
@@ -404,12 +684,139 @@ function parseDxf(text, fileName) {
         M = mul(M, [cs, sn, -sn, cs, 0, 0]);          // R
         M = mul(M, [sx, 0, 0, sy, 0, 0]);             // S
         M = mul(M, [1, 0, 0, 1, -blk.base[0], -blk.base[1]]); // T(-base)
-        const child = { m: mul(m, M), depth: (ctx.depth || 0) + 1 };
+        const child = { m: mul(m, M), depth: (ctx.depth || 0) + 1, lt: st.lt, lw: st.lw };
         if (child.depth > 8) break;
         for (let k = 0; k < blk.ents.length; k++) {
           const e = blk.ents[k];
           handleEntity(e.type, e.g === undefined ? null : e.g, child);
         }
+        break;
+      }
+
+      /* ---- 填充类 ---- */
+      case 'SOLID':
+      case 'TRACE': {
+        // DXF 的角点顺序是 1-2-4-3（第三、四个点在对角线上互换），
+        // 按 1-2-3-4 连会得到蝴蝶结。只有三个角时按三角形处理。
+        const pairs = [['10', '20'], ['11', '21'], ['13', '23'], ['12', '22']];
+        const pts = [];
+        for (const [kx, ky] of pairs) {
+          if (!g[kx] || !g[ky]) continue;
+          const X = tx(m, g[kx][0], g[ky][0]);
+          const Y = ty(m, g[kx][0], g[ky][0]);
+          pts.push(X, Y); upd(X, Y);
+        }
+        if (pts.length >= 6) {
+          B.fills.push({ p: new Float32Array(pts), a: 0.9 });
+          B.count++; totalEntities++; layer.count++;
+        }
+        break;
+      }
+      case 'HATCH': {
+        const loops = hatchLoops(g, m);
+        if (!loops.length) break;
+        const solid = (parseInt(g['70'], 10) || 0) & 1;
+        if (solid) {
+          for (const lp of loops) B.fills.push({ p: lp, a: 0.9 });
+        } else {
+          const name = String(g['2'] || '').trim();
+          const scale = parseFloat(g['41']);
+          let defs = g.__seq ? hatchDefsFromSeq(g.__seq) : [];
+          if (!defs.length) {
+            // 没有有序组码时：单条定义线还能从字典里拼出来，多条只能按图案名兜底
+            const nDef = parseInt(g['78'], 10);
+            const a = parseFloat(g['53']);
+            const ox = parseFloat(g['45']), oy = parseFloat(g['46']);
+            if (nDef === 1 && Number.isFinite(a) && Number.isFinite(ox) && Number.isFinite(oy)) {
+              defs = [{
+                angle: a * Math.PI / 180, ox, oy,
+                bx: parseFloat(g['43']) || 0, by: parseFloat(g['44']) || 0,
+              }];
+            } else {
+              defs = [patternByName(name, Number.isFinite(scale) ? scale : 1)];
+            }
+          }
+          const segs = [];
+          // 每条定义线单独扫一遍；多方向图案（ANSI32/33、NET…）靠这一步成形
+          const budget = { maxLines: defs.length > 1 ? Math.max(140, Math.floor(1200 / defs.length)) : 900 };
+          for (const d of defs) {
+            const s = hatchLines(loops, d, budget);
+            for (let k = 0; k < s.length; k++) segs.push(s[k]);
+          }
+          if (segs.length) {
+            for (let k = 0; k < segs.length; k++) B.segs.push(segs[k]);
+            // 填充线本身不算「实体」，包围盒已由边界环贡献
+          } else {
+            // 图案太密/定义异常 → 退化成淡色填充，至少能看出区域
+            for (const lp of loops) B.fills.push({ p: lp, a: 0.14 });
+          }
+        }
+        B.count++; totalEntities++; layer.count++;
+        break;
+      }
+
+      /* ---- 构造类 ---- */
+      case 'RAY':
+      case 'XLINE': {
+        const bx = g['10'] ? g['10'][0] : 0;
+        const by = g['20'] ? g['20'][0] : 0;
+        const dx = g['11'] ? g['11'][0] : 1;
+        const dy = g['21'] ? g['21'][0] : 0;
+        const X = tx(m, bx, by), Y = ty(m, bx, by);
+        // 方向只受旋转/缩放影响，不吃平移
+        const DX = m[0] * dx + m[2] * dy;
+        const DY = m[1] * dx + m[3] * dy;
+        pendingRays.push({ B, X, Y, DX, DY, both: type === 'XLINE', layer });
+        B.count++; totalEntities++; layer.count++;
+        break;
+      }
+      case 'MLINE': {
+        // 每条平行线的实际偏移量散落在顶点数据里，且随斜接角变化；
+        // 这里按「中心线」画一条折线 —— 位置绝对正确，只是少了几条平行线。
+        const xs = g['11'] || [], ys = g['21'] || [];
+        const cnt = Math.min(xs.length, ys.length);
+        if (cnt < 2) break;
+        const pts = [];
+        for (let k = 0; k < cnt; k++) {
+          const X = tx(m, xs[k], ys[k]), Y = ty(m, xs[k], ys[k]);
+          pts.push(X, Y); upd(X, Y);
+        }
+        B.polys.push(new Float32Array(pts));
+        B.polyClosed.push(0);
+        B.count++; totalEntities++; layer.count++;
+        break;
+      }
+      case 'LEADER': {
+        const xs = g['10'] || [], ys = g['20'] || [];
+        const cnt = Math.min(xs.length, ys.length);
+        if (cnt < 2) break;
+        const pts = [];
+        for (let k = 0; k < cnt; k++) {
+          const X = tx(m, xs[k], ys[k]), Y = ty(m, xs[k], ys[k]);
+          pts.push(X, Y); upd(X, Y);
+        }
+        B.polys.push(new Float32Array(pts));
+        B.polyClosed.push(0);
+        B.count++; totalEntities++; layer.count++;
+        break;
+      }
+      case 'SPLINE': {
+        const fx = g['11'] || [], fy = g['21'] || [];
+        const cx2 = g['10'] || [], cy2 = g['20'] || [];
+        const useFit = fx.length >= 2 && fy.length >= 2;
+        const xs = useFit ? fx : cx2;
+        const ys = useFit ? fy : cy2;
+        const cnt = Math.min(xs.length, ys.length);
+        if (cnt < 2) break;
+        const raw = [];
+        for (let k = 0; k < cnt; k++) raw.push(tx(m, xs[k], ys[k]), ty(m, xs[k], ys[k]));
+        const pts = [];
+        if (cnt === 2) { pts.push(raw[0], raw[1], raw[2], raw[3]); }
+        else catmullRom(raw, pts, false);
+        for (let k = 0; k < pts.length; k += 2) upd(pts[k], pts[k + 1]);
+        B.polys.push(new Float32Array(pts));
+        B.polyClosed.push(0);
+        B.count++; totalEntities++; layer.count++;
         break;
       }
       default:
@@ -441,7 +848,7 @@ function parseDxf(text, fileName) {
       if (type === 'ENDSEC' || type === 'ENDBLK' || type === 'SEQEND' || type === 'EOF') {
         return { type, g: null };
       }
-      const g = readGroups();
+      const g = readGroups(type);
       return { type, g };
     }
     return null;
@@ -461,6 +868,10 @@ function parseDxf(text, fileName) {
             if (c66 < 0) { L.visible = false; L.colorIndex = Math.min(255, -c66); }
             else { L.colorIndex = Math.min(255, c66); L.visible = true; }
           }
+          const lt = (e.g['6'] || '').trim();
+          if (lt) L.lineType = lt;
+          const lw = parseInt(e.g['370'], 10);
+          if (Number.isFinite(lw)) L.lineWeight = lw;
         }
       }
     }
@@ -547,6 +958,18 @@ function parseDxf(text, fileName) {
     i += 2;
   }
 
+  /* ---- 射线 / 构造线：等包围盒定型后再裁剪 ---- */
+  if (pendingRays.length) {
+    const box = { minX, minY, maxX, maxY };
+    if (!Number.isFinite(box.minX)) { box.minX = 0; box.minY = 0; box.maxX = 100; box.maxY = 100; }
+    for (const r of pendingRays) {
+      const seg = clipInfinite(r.X, r.Y, r.DX, r.DY, box, r.both);
+      if (seg.length < 4) continue;
+      r.B.segs.push(seg[0], seg[1], seg[2], seg[3]);
+      upd(seg[0], seg[1]); upd(seg[2], seg[3]);
+    }
+  }
+
   /* ---- 整理输出：数组 → 类型化数组 ---- */
   const buckets = [];
   for (let k = 0; k < bucketList.length; k++) {
@@ -556,13 +979,16 @@ function parseDxf(text, fileName) {
       layer: B.layer,
       color: B.color,
       count: B.count,
+      dash: B.dash,
+      lw: B.lw,
       segs: new Float32Array(B.segs),
       circles: new Float32Array(B.circles),
       arcs: new Float32Array(B.arcs),
       polys: B.polys,
       polyClosed: new Uint8Array(B.polyClosed),
       points: new Float32Array(B.points),
-      texts: B.texts
+      texts: B.texts,
+      fills: B.fills
     });
   }
 

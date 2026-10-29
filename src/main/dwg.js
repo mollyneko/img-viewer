@@ -34,7 +34,7 @@ function supported(p) {
 function keys(abs, st, dark) {
   const k = crypto
     .createHash('sha1')
-    .update(`${abs.toLowerCase()}|${st.mtimeMs}|${st.size}|dwg8|${dark ? 'd' : 'l'}`)
+    .update(`${abs.toLowerCase()}|${st.mtimeMs}|${st.size}|dwg10|${dark ? 'd' : 'l'}`)
     .digest('hex');
   return {
     svg: path.join(cfg.cacheDir, k + '.svg'),
@@ -119,6 +119,12 @@ function robustBounds(conv) {
     const ps = B.points;
     for (let i = 0; i + 1 < ps.length; i += 2) push(ps[i], ps[i + 1]);
     for (const t of B.texts) push(t.x, t.y);
+    if (B.fills) {
+      for (const f of B.fills) {
+        const p = f.p;
+        for (let i = 0; i + 1 < p.length; i += 2) push(p[i], p[i + 1]);
+      }
+    }
   }
   const N = xs.length;
   if (N < 32) return fb;                         // 图元太少，直接用原始边界
@@ -294,25 +300,57 @@ function buildSVG(conv, dark) {
   const w = Math.max(1, b.maxX - b.minX);
   const h = Math.max(1, b.maxY - b.minY);
   const span = Math.max(w, h);
-  const sw = Math.max(span / 1400, 1);   // 线宽 ≈ 千分之一跨度，且不低于 1px 以免细线在缩略图里消失
-  const ptR = span / 400;
-  // 内在尺寸封顶，保持纵横比
-  const scale = Math.min(1, MAX_SIDE / Math.max(w, h));
+  // 内在像素尺寸：既封顶也兜底。
+  // 封顶 —— 500 万单位高的 SVG 会直接画不出来（空白）；
+  // 兜底 —— 图纸坐标常常只有几十个单位（小样张、按米绘制），若照搬 CAD 单位当像素，
+  // 一张 10×38 px 的 SVG 被放大到满屏就是一坨马赛克。给一个 ~2048px 的下限，
+  // 矢量细节才经得起缩放。
+  const scale = Math.max(2048 / span, Math.min(1, MAX_SIDE / span));
   const outW = Math.max(1, Math.round(w * scale));
   const outH = Math.max(1, Math.round(h * scale));
-  const parts = [];
-  parts.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${outW}" height="${outH}" ` +
-    `viewBox="${f2(b.minX)} ${f2(-b.maxY)} ${f2(w)} ${f2(h)}">`
-  );
+  // 基准线宽 ≈ 千分之一跨度。下限必须换算成「图纸单位」，即至少 1.2 个像素：
+  // 一张只有 38 个单位高的样张，若按 1 个单位画线，线宽会占满整张图。
+  const sw = Math.max(span / 1400, 1.2 / scale);
+  const dashUnit = sw;                   // 虚线段长度按同一基准缩放（见 cad-geom.dashFor）
+  const ptR = span / 400;
 
-  // 注：CAD 的 Y 轴向上，SVG 的 Y 轴向下 → 用 transform 翻转一次，
-  // 桶内坐标保持数学坐标，文字翻转后通过逆变换摆正。透明底，颜色随主题。
-  parts.push('<g transform="scale(1,-1)">');
+  const layers = Array.isArray(conv.layers) ? conv.layers : [];
+  // 同一图层可能被拆成多个桶（不同颜色/线型/线宽），先在图层维度聚合，
+  // 这样渲染层只要切一个 <g data-layer> 的 display 就能整层显隐。
+  const byLayer = new Map();
+  const bucketLayer = (i) => {
+    let arr = byLayer.get(i);
+    if (!arr) { arr = []; byLayer.set(i, arr); }
+    return arr;
+  };
 
+  /* ---- 第一遍：填充（必须压在线条下面，否则实心填充会把轮廓吃掉） ---- */
   for (const B of conv.buckets) {
+    if (!B.fills || !B.fills.length) continue;
+    const arr = bucketLayer(B.layer);
     const color = fixColor(B.color, dark);
-    const g = [`<g stroke="${color}" fill="none" stroke-width="${f2(sw)}" stroke-linecap="round" stroke-linejoin="round">`];
+    const byAlpha = new Map();
+    for (const f of B.fills) {
+      const a = f.a == null ? 0.9 : f.a;
+      let list = byAlpha.get(a);
+      if (!list) { list = []; byAlpha.set(a, list); }
+      list.push(f.p);
+    }
+    for (const [a, rings] of byAlpha) {
+      const d = rings.map((p) => 'M' + ptsAttr(p) + 'Z').join('');
+      arr.push(`<path d="${d}" fill="${color}" fill-opacity="${f2(a)}" fill-rule="evenodd" stroke="none"/>`);
+    }
+  }
+
+  /* ---- 第二遍：线条 / 文字 ---- */
+  for (const B of conv.buckets) {
+    const arr = bucketLayer(B.layer);
+    const color = fixColor(B.color, dark);
+    const width = sw * (B.lw > 0 ? B.lw : 1);
+    const dash = B.dash
+      ? ` stroke-dasharray="${B.dash.split(',').map((v) => f2(Number(v) * dashUnit)).join(' ')}"`
+      : '';
+    const g = [`<g stroke="${color}" fill="none" stroke-width="${f2(width)}" stroke-linecap="round" stroke-linejoin="round"${dash}>`];
     // 直线段
     const segs = B.segs;
     for (let i = 0; i + 3 < segs.length; i += 4) {
@@ -349,19 +387,56 @@ function buildSVG(conv, dark) {
         const fs = Math.max(t.h, span / 500);
         const deg = -(t.rot || 0) * 180 / Math.PI;
         const tf = deg ? ` transform="rotate(${deg.toFixed(1)} ${f2(t.x)} ${f2(-t.y)})"` : '';
-        tg.push(`<text x="${f2(t.x)}" y="${f2(-t.y)}" font-size="${f2(fs)}"${tf} xml:space="preserve">${escapeXML(t.s)}</text>`);
+        const lines = String(t.s).split('\n');
+        if (lines.length === 1) {
+          tg.push(`<text x="${f2(t.x)}" y="${f2(-t.y)}" font-size="${f2(fs)}"${tf} xml:space="preserve">${escapeXML(lines[0])}</text>`);
+        } else {
+          // MTEXT 多行：用 tspan 逐行下移，行距取 1.25 倍字高
+          const ts = lines.slice(0, 24).map((ln, k) => `<tspan x="${f2(t.x)}" dy="${k ? f2(fs * 1.25) : 0}">${escapeXML(ln)}</tspan>`);
+          tg.push(`<text y="${f2(-t.y)}" font-size="${f2(fs)}"${tf} xml:space="preserve">${ts.join('')}</text>`);
+        }
       }
       tg.push('</g>');
       g.push(tg.join(''));
     }
     g.push('</g>');
-    parts.push(g.join(''));
+    arr.push(g.join(''));
   }
 
+  const parts = [];
+  parts.push(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${outW}" height="${outH}" ` +
+    `viewBox="${f2(b.minX)} ${f2(-b.maxY)} ${f2(w)} ${f2(h)}">`
+  );
+  // 注：CAD 的 Y 轴向上，SVG 的 Y 轴向下 → 用 transform 翻转一次，
+  // 桶内坐标保持数学坐标，文字翻转后通过逆变换摆正。透明底，颜色随主题。
+  parts.push('<g transform="scale(1,-1)">');
+  for (const [idx, arr] of byLayer) {
+    const L = layers[idx];
+    // 图纸里关掉/冻结的图层默认不显示，但保留在 DOM 里 —— 图层面板可以手动打开
+    const hidden = L && L.visible === false ? ' display="none"' : '';
+    const nm = L && L.name ? ` data-name="${escapeXML(L.name)}"` : '';
+    parts.push(`<g data-layer="${idx}"${nm}${hidden}>${arr.join('')}</g>`);
+  }
   parts.push('</g></svg>');
+
   // ⚠️ width/height 必须是 SVG 的内在像素尺寸(outW/outH)，不能是 CAD 单位——
   // 渲染层 fit() 用它算缩放，和 <img> 的固有尺寸脱钩会把图缩成亚像素(空白画布)。
-  return { svg: parts.join(''), width: outW, height: outH, cadWidth: w, cadHeight: h };
+  return {
+    svg: parts.join(''),
+    width: outW,
+    height: outH,
+    cadWidth: w,
+    cadHeight: h,
+    // 视图范围：渲染层据此把鼠标像素换算成图纸坐标（状态栏读数 / 测量）
+    box: { minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY },
+    layers: layers.map((L, i) => ({
+      name: L.name || ('图层' + i),
+      color: L.color || '#9aa4b2',
+      visible: L.visible !== false,
+      count: L.count || 0,
+    })),
+  };
 }
 
 function escapeXML(s) {
@@ -427,7 +502,10 @@ async function render(abs, opts) {
     const conv = await parseWithTimeout(abs, ext);
     if (!conv || !conv.ok) throw new Error('解析失败：文件损坏或版本不受支持');
 
-    const { svg, width: rw, height: rh, cadWidth: cw, cadHeight: ch } = buildSVG(conv, dark);
+    const built = buildSVG(conv, dark);
+    const svg = built.svg;
+    const rw = built.width, rh = built.height;
+    const cw = built.cadWidth, ch = built.cadHeight;
     if (svg.length > MAX_SVG_BYTES) throw new Error('图纸过于复杂，SVG 体积超限');
 
     const { svg: svgPath, meta } = keys(abs, st, dark);
@@ -441,8 +519,11 @@ async function render(abs, opts) {
       height: rh,
       cadWidth: cw,
       cadHeight: ch,
+      // 图纸坐标范围（= SVG viewBox），渲染层用它把鼠标位置换算成图纸坐标
+      box: built.box,
+      layers: built.layers,
+      layerCount: built.layers.length,
       entities: conv.stats ? conv.stats.entities : 0,
-      layers: conv.layers ? conv.layers.length : 0,
       format: conv.format,
       renderedAt: Date.now(),
     };
