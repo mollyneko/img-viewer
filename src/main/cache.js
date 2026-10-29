@@ -49,9 +49,12 @@ class DiskCache {
   async get(key) {
     if (!this.enabled) return null;
     try {
-      const data = await fsp.readFile(path.join(this.dir, key));
-      const meta = JSON.parse(await fsp.readFile(path.join(this.dir, key + '.json'), 'utf8'));
-      return { data, meta };
+      // 数据与元信息并行读：网格里一格一次命中，串行等于多一倍往返
+      const [data, metaRaw] = await Promise.all([
+        fsp.readFile(path.join(this.dir, key)),
+        fsp.readFile(path.join(this.dir, key + '.json'), 'utf8'),
+      ]);
+      return { data, meta: JSON.parse(metaRaw) };
     } catch {
       return null;
     }

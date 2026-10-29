@@ -17,6 +17,10 @@ const assoc = require('./assoc');
 const isSmoke = process.argv.includes('--smoke-test');
 const IMG_CACHE = new Map();      // 内嵌预览的内存缓存（避免同一次会话重复挖）
 const IMG_CACHE_MAX = 40;
+// 光限条数不够：一张 RAW 的内嵌预览本身就可能几 MB，40 条能顶到几百 MB。
+// 再加一个总字节上限，超了就从最旧的开始丢。
+const IMG_CACHE_BYTES = 96 * 1024 * 1024;
+let imgCacheBytes = 0;
 
 let win = null;
 let cache = null;
@@ -126,18 +130,31 @@ function isDarkTheme() {
   return !!(nativeTheme && nativeTheme.shouldUseDarkColors);
 }
 
-// 取内嵌预览（带内存缓存）
+// 取内嵌预览（带内存缓存）。
+// 缓存键必须带缩略图/全尺寸两种模式：缩略图只扫文件前 16MB，可能只挖到一张
+// 小预览；如果两种模式共用键，先出网格就会把「小预览」缓存下来，
+// 之后点开大图仍然拿到它 —— 画面糊掉。分开存，各用各的。
+function previewKey(abs, thumbMode) {
+  return abs + (thumbMode ? '\u0000thumb' : '\u0000full');
+}
+
 async function getPreview(abs, thumbMode) {
-  const hit = IMG_CACHE.get(abs);
+  const key = previewKey(abs, thumbMode);
+  const hit = IMG_CACHE.get(key);
   if (hit) return hit;
   const pv = await previewer.extractPreview(abs, {
     maxBytes: thumbMode ? previewer.THUMB_SCAN_BYTES : previewer.FULL_SCAN_BYTES,
   });
   if (!pv) return null;
-  if (IMG_CACHE.size >= IMG_CACHE_MAX) {
-    IMG_CACHE.delete(IMG_CACHE.keys().next().value);
+  const cost = pv.buffer.length;
+  while (IMG_CACHE.size && (IMG_CACHE.size >= IMG_CACHE_MAX || imgCacheBytes + cost > IMG_CACHE_BYTES)) {
+    const k = IMG_CACHE.keys().next().value;
+    const old = IMG_CACHE.get(k);
+    IMG_CACHE.delete(k);
+    imgCacheBytes -= old ? old.buffer.length : 0;
   }
-  IMG_CACHE.set(abs, pv);
+  IMG_CACHE.set(key, pv);
+  imgCacheBytes += cost;
   return pv;
 }
 
@@ -181,6 +198,13 @@ function handleProtocol() {
 
     // ---- 缩略图 ----
     if (host === 'thumb') {
+      // 渲染层画直方图时会 fetch() 这张缩略图（比搬整张原图便宜得多）。
+      // file:// 页面到 ratfile:// 属跨源，必须带 CORS 头才允许读响应体；
+      // 图片标签本身不受影响，加上无害。
+      const thumbHeaders = (mime) => ({
+        'content-type': mime,
+        'access-control-allow-origin': '*',
+      });
       // 矢量缩略图的缓存键必须带「算法版本 + 主题」：SVG 是透明底且线条颜色
       // 随主题变，键不变的话切主题或改算法后还会命中旧的（白底/暗线）缩略图。
       const vecTag = scanner.CAD.has(ext)
@@ -188,7 +212,7 @@ function handleProtocol() {
         : '';
       const key = cache.key(abs, st.mtimeMs, st.size, 'thumb:' + w + vecTag);
       const cached = await cache.get(key);
-      if (cached) return new Response(cached.data, { headers: { 'content-type': cached.meta.mime } });
+      if (cached) return new Response(cached.data, { headers: thumbHeaders(cached.meta.mime) });
 
       let out = null;
 
@@ -248,7 +272,7 @@ function handleProtocol() {
             }
           } catch { /* 线宽调整失败就按原样给 */ }
         }
-        return new Response(data, { headers: { 'content-type': 'image/svg+xml' } });
+        return new Response(data, { headers: thumbHeaders('image/svg+xml') });
       }
 
       // 兜底：原图交给 Chromium 自己缩（GIF/WebP/BMP/AVIF/SVG）
@@ -261,7 +285,7 @@ function handleProtocol() {
       }
 
       if (out.data.length < 4 * 1024 * 1024) await cache.set(key, out.data, { mime: out.mime });
-      return new Response(out.data, { headers: { 'content-type': out.mime } });
+      return new Response(out.data, { headers: thumbHeaders(out.mime) });
     }
 
     // ---- 全尺寸 ----
@@ -568,6 +592,14 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
+  });
+  // 应用本身是单页，不存在「跳到别的页面」的场景。渲染层一旦被诱导导航
+  // （比如拖进来的 HTML / 恶意的 file:// 路径），整个界面就被换掉了，
+  // 所以除 file:// 外一律拦住；外链转给系统浏览器。
+  win.webContents.on('will-navigate', (e, url) => {
+    if (url.startsWith('file://')) return;
+    e.preventDefault();
+    if (/^https?:/.test(url)) shell.openExternal(url);
   });
 
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));

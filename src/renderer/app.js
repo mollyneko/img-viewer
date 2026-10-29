@@ -218,10 +218,17 @@ function renderTabs() {
 }
 
 // ------------------------------------------------------------------ 选中/加载
+// 连按方向键时会有多个 openImage 同时在飞，谁先回来不确定。
+// 用一个自增令牌把「过期的回包」丢掉 —— 否则画面会跳回上一张，
+// 而索引/信息面板已经指向新的那张，看起来就是「图和文件名对不上」。
+let selectToken = 0;
+
 async function select(i) {
   if (i < 0 || i >= state.files.length) return;
   const f = state.files[i];
+  const token = ++selectToken;
   const info = await R.openImage(f.path);
+  if (token !== selectToken) return;   // 已经切到别的图了，这次结果作废
 
   if (!info || !info.ok) {
     state.index = i;
@@ -354,15 +361,22 @@ function next() {
 
 // 翻页预取：把相邻 1–2 张送进 openImage（native 读 EXIF、preview/矢量会顺手预热），
 // 让来回翻看几乎瞬时。矢量图预热要起进程，跳过避免刷图时一次性拉起太多。
+// 加了防抖：按住方向键连翻时，每按一次就发 4 个 IPC 会把主进程塞爆，
+// 等手停下来（180ms 没有新选中）再预取才有意义。
+let prefetchTimer = null;
 function prefetchNeighbors(i) {
-  const total = state.files.length;
-  if (!total) return;
-  for (const j of [i - 1, i + 1, i - 2, i + 2]) {
-    if (j < 0 || j >= total) continue;
-    const f = state.files[j];
-    if (VECTOR_EXT.has(String(f.ext || '').toLowerCase())) continue;
-    R.openImage(f.path).catch(() => {});
-  }
+  clearTimeout(prefetchTimer);
+  prefetchTimer = setTimeout(() => {
+    if (state.index !== i) return;     // 期间又翻页了，交给新的那次预取
+    const total = state.files.length;
+    if (!total) return;
+    for (const j of [i - 1, i + 1, i - 2, i + 2]) {
+      if (j < 0 || j >= total) continue;
+      const f = state.files[j];
+      if (VECTOR_EXT.has(String(f.ext || '').toLowerCase())) continue;
+      R.openImage(f.path).catch(() => {});
+    }
+  }, 180);
 }
 
 const EMPTY_HINT_TITLE = '把图片或文件夹拖进来';
@@ -386,13 +400,22 @@ function renderEmpty() {
 }
 
 // ------------------------------------------------------------------ 视图变换
+// 滤镜表达式只有亮度/对比度/饱和度变化时才需要重设。
+// 平移时每秒要调 updateStage 几十次，重复写同一个 style.filter 会让浏览器
+// 白白重建一次滤镜链。
+let lastFilter = null;
+
 function updateStage(anim) {
   const img = $('#stage');
   const v = state.view;
   img.classList.toggle('anim', !!anim);
-  img.style.filter = `brightness(${(1 + state.adj.b / 100 * 0.6).toFixed(3)}) `
+  const filter = `brightness(${(1 + state.adj.b / 100 * 0.6).toFixed(3)}) `
     + `contrast(${(1 + state.adj.c / 100 * 0.9).toFixed(3)}) `
     + `saturate(${(1 + state.adj.s / 100).toFixed(3)})`;
+  if (filter !== lastFilter) {
+    img.style.filter = filter;
+    lastFilter = filter;
+  }
   // -50%,-50% 先把图中心对齐到视口中心(#stage 被 absolute 定位在 50%/50%),
   // 之后 tx/ty 就是「图中心相对视口中心的偏移」—— 与 zoomAt/imageRect 的模型一致
   img.style.transform = `translate(-50%, -50%) translate(${v.tx}px, ${v.ty}px) scale(${v.z}) rotate(${v.rot}deg) scale(${v.sx}, ${v.sy})`;
@@ -540,6 +563,38 @@ function drawHist(ctx, W, H, hist) {
 
 // 矢量图（CDR/DWG 的 SVG）画到 canvas 后，浏览器出于安全策略禁止 getImageData 回读像素，
 // 所以矢量图的直方图天然不可用 —— 这里把异常兜住，画布显示「无法读取像素」而不是整页报错。
+
+// 直方图只需要 220px 左右的一小撮像素。原实现走 imageBytes 把整张原图搬进渲染层
+// 再解码一遍：一张 32MB 的图约 100ms，还要瞬时多占 64MB 内存 —— 只为了画个 240×72 的小图。
+// 缩略图管道早就把同一张图的 220px 版本生成好并落盘了，直接 fetch 它即可（约 20KB）。
+// 拿不到（矢量 / 特殊格式）再退回原来的整图读取。
+const histMemo = new Map();          // path -> {bins, rgb, mean, std}
+const HIST_MEMO_MAX = 24;
+
+async function loadThumbDrawable(p) {
+  try {
+    // 宽度必须与胶片条一致(220)，否则会生成两份不同尺寸的缩略图缓存 ——
+    // 本来想省一次整图传输，结果多转一张，得不偿失。
+    const res = await fetch(R.thumbUrl(p, 220));
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    const ok = await new Promise((resolve) => {
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = url;
+    });
+    if (!ok) {
+      URL.revokeObjectURL(url);
+      return null;
+    }
+    return { url, w: img.naturalWidth, h: img.naturalHeight, img, temp: true };
+  } catch {
+    return null;
+  }
+}
+
 async function buildHistogram(p) {
   state.histSource = p || null;
   const cv = $('#hist');
@@ -553,62 +608,68 @@ async function buildHistogram(p) {
   ctx.fillStyle = dark ? '#0a0d12' : '#eef0f4';
   ctx.fillRect(0, 0, W, H);
 
-  const d = await getDrawable(p);
-  if (!d) {
+  const failed = () => {
     ctx.fillStyle = dark ? '#6c7787' : '#8b93a3';
     ctx.font = '11px sans-serif';
     ctx.fillText('无法读取像素', 10, H / 2 + 4);
-    return;
-  }
+  };
+
   // 同一张图反复翻回时直接复用已算好的直方图，省一次采样
-  if (d.hist) {
-    drawHist(ctx, W, H, d.hist);
+  const memo = histMemo.get(p);
+  if (memo) {
+    state.histStats = { mean: memo.mean, std: memo.std };
+    drawHist(ctx, W, H, memo);
     return;
   }
 
-  let sw, sh, sctx;
-  try {
-    const s = smallSample(d);
-    sw = s.w; sh = s.h; sctx = s.ctx;
-  } catch (e) {
-    ctx.fillStyle = dark ? '#6c7787' : '#8b93a3';
-    ctx.font = '11px sans-serif';
-    ctx.fillText('无法读取像素', 10, H / 2 + 4);
+  let d = await loadThumbDrawable(p);
+  if (!d) d = await getDrawable(p);       // 缩略图取不到 → 退回整图字节
+  if (!d) {
+    failed();
     return;
   }
 
-  let data;
-  try {
-    data = sctx.getImageData(0, 0, sw, sh).data;
-  } catch (e) {
-    ctx.fillStyle = dark ? '#6c7787' : '#8b93a3';
-    ctx.font = '11px sans-serif';
-    ctx.fillText('无法读取像素', 10, H / 2 + 4);
-    return;
+  let hist = d.hist || null;
+  if (!hist) {
+    try {
+      const s = smallSample(d);
+      const data = s.ctx.getImageData(0, 0, s.w, s.h).data;
+      const bins = new Array(64).fill(0);
+      const rgb = [new Array(64).fill(0), new Array(64).fill(0), new Array(64).fill(0)];
+      let sum = 0;
+      let sum2 = 0;
+      const n = s.w * s.h;
+      for (let i = 0; i < n; i++) {
+        const r = data[i * 4];
+        const g = data[i * 4 + 1];
+        const b = data[i * 4 + 2];
+        const l = 0.299 * r + 0.587 * g + 0.114 * b;
+        sum += l;
+        sum2 += l * l;
+        bins[Math.min(63, (l / 4) | 0)]++;
+        rgb[0][Math.min(63, (r / 4) | 0)]++;
+        rgb[1][Math.min(63, (g / 4) | 0)]++;
+        rgb[2][Math.min(63, (b / 4) | 0)]++;
+      }
+      const mean = sum / n;
+      const std = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+      hist = { bins, rgb, mean, std };
+      d.hist = hist;      // 走整图路径时顺手留在 drawCache 里
+    } catch (e) {
+      hist = null;        // 画不进去 / 读不回来（taint），按不支持处理
+    }
   }
 
-  const bins = new Array(64).fill(0);
-  const rgb = [new Array(64).fill(0), new Array(64).fill(0), new Array(64).fill(0)];
-  let sum = 0;
-  let sum2 = 0;
-  const n = sw * sh;
-  for (let i = 0; i < n; i++) {
-    const r = data[i * 4];
-    const g = data[i * 4 + 1];
-    const b = data[i * 4 + 2];
-    const l = 0.299 * r + 0.587 * g + 0.114 * b;
-    sum += l;
-    sum2 += l * l;
-    bins[Math.min(63, (l / 4) | 0)]++;
-    rgb[0][Math.min(63, (r / 4) | 0)]++;
-    rgb[1][Math.min(63, (g / 4) | 0)]++;
-    rgb[2][Math.min(63, (b / 4) | 0)]++;
+  if (d.temp) URL.revokeObjectURL(d.url);
+
+  if (!hist) {
+    failed();
+    return;
   }
-  const mean = sum / n;
-  const std = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
-  state.histStats = { mean, std };
-  d.hist = { bins, rgb, mean, std };
-  drawHist(ctx, W, H, d.hist);
+  state.histStats = { mean: hist.mean, std: hist.std };
+  if (histMemo.size >= HIST_MEMO_MAX) histMemo.delete(histMemo.keys().next().value);
+  histMemo.set(p, hist);
+  drawHist(ctx, W, H, hist);
 }
 
 function autoEnhance() {
@@ -704,55 +765,95 @@ function attachVectorThumbRetry(img, f, w) {
   });
 }
 
+// 胶片条窗口：大文件夹只渲染当前附近的 60 个，避免一次性创建上千个 DOM。
+// 之前每按一次方向键都整块重建（60 个 div + 60 个 img 全部重新请求），
+// 连翻时肉眼可见地卡。现在只有「选中项跑出已渲染范围的内圈」才换窗口，
+// 其余情况只切换 .on 类名。
+const FILM_WIN = 60;
+const FILM_MARGIN = 8;
+let filmRange = { total: -1, start: 0, end: 0 };
+let filmSignature = '';
+
+function filmWindow(total) {
+  if (total <= FILM_WIN) return { start: 0, end: total };
+  const inRange = filmRange.total === total
+    && state.index >= filmRange.start + FILM_MARGIN
+    && state.index <= filmRange.end - FILM_MARGIN;
+  if (inRange) return { start: filmRange.start, end: filmRange.end };
+  const start = clamp(state.index - FILM_WIN / 2, 0, total - FILM_WIN);
+  return { start, end: start + FILM_WIN };
+}
+
 function renderFilm() {
   const box = $('#filmstrip');
-  box.innerHTML = '';
-  // 大文件夹只渲染当前附近的窗口，避免一次性创建上千个 DOM
   const total = state.files.length;
-  const win = 60;
-  let start = 0;
-  let end = total;
-  if (total > win) {
-    start = clamp(state.index - win / 2, 0, total - win);
-    end = start + win;
-  }
-  for (let i = start; i < end; i++) {
-    const f = state.files[i];
-    const el = document.createElement('div');
-    el.className = 'thumb' + (i === state.index ? ' on' : '');
-    el.title = f.name;
-    const img = document.createElement('img');
-    img.loading = 'lazy';
-    img.decoding = 'async';
-    // 矢量图纸：完整显示(不裁切)，并允许转换完成后重试
-    if (VECTOR_EXT.has(String(f.ext || '').toLowerCase())) img.className = 'fit';
-    attachVectorThumbRetry(img, f, 220);
-    img.src = R.thumbUrl(f.path, 220);
-    const nm = document.createElement('span');
-    nm.className = 'nm';
-    nm.textContent = f.name;
-    el.append(img, nm);
-    const b = badgeOf(f.ext);
-    if (b) {
-      const tag = document.createElement('span');
-      tag.className = 'tag ' + b;
-      tag.textContent = b === 'cdr' ? (CAD_EXT.has(f.ext) ? f.ext.slice(1).toUpperCase() : 'CDR')
-        : (NATIVE_EXT.has(f.ext) ? '' : '预览');
-      if (tag.textContent) el.appendChild(tag);
+  const { start, end } = filmWindow(total);
+
+  // 签名里带首个文件路径：换了文件夹但张数恰好相同时也要重建
+  const sig = total + '|' + start + '|' + end + '|' + (total ? state.files[0].path : '');
+
+  if (sig !== filmSignature) {
+    box.innerHTML = '';
+    for (let i = start; i < end; i++) {
+      const f = state.files[i];
+      const el = document.createElement('div');
+      el.className = 'thumb' + (i === state.index ? ' on' : '');
+      el.title = f.name;
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      // 矢量图纸：完整显示(不裁切)，并允许转换完成后重试
+      if (VECTOR_EXT.has(String(f.ext || '').toLowerCase())) img.className = 'fit';
+      attachVectorThumbRetry(img, f, 220);
+      img.src = R.thumbUrl(f.path, 220);
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = f.name;
+      el.append(img, nm);
+      const b = badgeOf(f.ext);
+      if (b) {
+        const tag = document.createElement('span');
+        tag.className = 'tag ' + b;
+        tag.textContent = b === 'cdr' ? (CAD_EXT.has(f.ext) ? f.ext.slice(1).toUpperCase() : 'CDR')
+          : (NATIVE_EXT.has(f.ext) ? '' : '预览');
+        if (tag.textContent) el.appendChild(tag);
+      }
+      el.addEventListener('click', () => select(i));
+      box.appendChild(el);
     }
-    el.addEventListener('click', () => select(i));
-    box.appendChild(el);
+    filmSignature = sig;
+  }
+
+  filmRange = { total, start, end };
+
+  const cells = box.children;
+  for (let k = 0; k < cells.length; k++) {
+    cells[k].classList.toggle('on', start + k === state.index);
   }
   const cur = box.querySelector('.thumb.on');
   if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'center' });
 }
 
 // ------------------------------------------------------------------ 管理（网格）
+// 缩略图宽度按档位取整：滑块是连续值，若每次拖动都按新宽度取缩略图，
+// 一个来回就会在主进程里重新解码几十遍整个文件夹（每档都是一次 cache miss）。
+const GRID_THUMB_STEPS = [240, 320, 420, 560, 720, 900];
+function gridThumbWidth(size) {
+  const want = Math.max(240, size * 2);
+  return GRID_THUMB_STEPS.find((s) => s >= want) || GRID_THUMB_STEPS[GRID_THUMB_STEPS.length - 1];
+}
+
+// 上次渲染的依据（文件夹列表引用 / 过滤词 / 缩略图档位）。
+// 三者都没变时只更新选中态，不再重建上千个节点 —— 每次切到管理屏都重建
+// 大文件夹要卡一百多毫秒。
+let gridCache = { files: null, q: '', tw: 0, count: '' };
+
 function renderGrid() {
   const g = $('#grid');
   const size = +$('#mgSize').value;
   g.style.setProperty('--cell', size + 'px');
   const q = ($('#mgFilter').value || '').trim().toLowerCase();
+  const tw = gridThumbWidth(size);
 
   if (!state.files.length) {
     g.innerHTML = '';
@@ -761,49 +862,60 @@ function renderGrid() {
     d.textContent = '还没载入文件夹 —— 点上方「打开文件夹」，或直接把文件夹拖进窗口';
     g.appendChild(d);
     $('#mgCount').textContent = '0 项';
+    gridCache = { files: null, q, tw, count: '0 项' };
     return;
   }
 
-  // 按文件名过滤（大文件夹里也能快速定位）
-  let shown = 0;
-  const frag = document.createDocumentFragment();
-  state.files.forEach((f, realIdx) => {
-    if (q && !String(f.name || '').toLowerCase().includes(q)) return;
-    shown++;
-    const cell = document.createElement('div');
-    cell.className = 'cell' + (realIdx === state.index ? ' on' : '');
-    const pv = document.createElement('div');
-    pv.className = 'pv';
-    const img = document.createElement('img');
-    img.loading = 'lazy';
-    img.decoding = 'async';
-    if (VECTOR_EXT.has(String(f.ext || '').toLowerCase())) img.className = 'fit';
-    attachVectorThumbRetry(img, f, Math.max(240, size * 2));
-    img.src = R.thumbUrl(f.path, Math.max(240, size * 2));
-    img.alt = f.name;
-    pv.appendChild(img);
-    const b = badgeOf(f.ext);
-    if (b) {
-      const bd = document.createElement('span');
-      bd.className = 'badge ' + b;
-      bd.textContent = b === 'cdr' ? (CAD_EXT.has(f.ext) ? f.ext.slice(1).toUpperCase() : 'CDR')
-        : (NATIVE_EXT.has(f.ext) ? f.ext.slice(1).toUpperCase() : '预览');
-      pv.appendChild(bd);
+  const unchanged = gridCache.files === state.files && gridCache.q === q && gridCache.tw === tw;
+
+  if (!unchanged) {
+    // 按文件名过滤（大文件夹里也能快速定位）
+    let shown = 0;
+    const frag = document.createDocumentFragment();
+    state.files.forEach((f, realIdx) => {
+      if (q && !String(f.name || '').toLowerCase().includes(q)) return;
+      shown++;
+      const cell = document.createElement('div');
+      cell.className = 'cell' + (realIdx === state.index ? ' on' : '');
+      cell.dataset.i = String(realIdx);
+      const pv = document.createElement('div');
+      pv.className = 'pv';
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      if (VECTOR_EXT.has(String(f.ext || '').toLowerCase())) img.className = 'fit';
+      attachVectorThumbRetry(img, f, tw);
+      img.src = R.thumbUrl(f.path, tw);
+      img.alt = f.name;
+      pv.appendChild(img);
+      const b = badgeOf(f.ext);
+      if (b) {
+        const bd = document.createElement('span');
+        bd.className = 'badge ' + b;
+        bd.textContent = b === 'cdr' ? (CAD_EXT.has(f.ext) ? f.ext.slice(1).toUpperCase() : 'CDR')
+          : (NATIVE_EXT.has(f.ext) ? f.ext.slice(1).toUpperCase() : '预览');
+        pv.appendChild(bd);
+      }
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.innerHTML = `<div class="ttl"></div><div class="sub"><span></span><span></span></div>`;
+      meta.querySelector('.ttl').textContent = f.name;
+      meta.querySelector('.sub span:first-child').textContent = fmtSize(f.size);
+      meta.querySelector('.sub span:last-child').textContent = fmtTime(f.mtime).slice(0, 10);
+      cell.append(pv, meta);
+      // 用真实索引，过滤后点击才不会选错文件
+      cell.addEventListener('click', () => { select(realIdx); go('view'); });
+      frag.appendChild(cell);
+    });
+    g.innerHTML = '';
+    g.appendChild(frag);
+    gridCache = { files: state.files, q, tw, count: (q ? shown + ' / ' : '') + state.files.length + ' 项' };
+  } else {
+    for (const el of g.children) {
+      el.classList.toggle('on', +el.dataset.i === state.index);
     }
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    meta.innerHTML = `<div class="ttl"></div><div class="sub"><span></span><span></span></div>`;
-    meta.querySelector('.ttl').textContent = f.name;
-    meta.querySelector('.sub span:first-child').textContent = fmtSize(f.size);
-    meta.querySelector('.sub span:last-child').textContent = fmtTime(f.mtime).slice(0, 10);
-    cell.append(pv, meta);
-    // 用真实索引，过滤后点击才不会选错文件
-    cell.addEventListener('click', () => { select(realIdx); go('view'); });
-    frag.appendChild(cell);
-  });
-  g.innerHTML = '';
-  g.appendChild(frag);
-  $('#mgCount').textContent = (q ? shown + ' / ' : '') + state.files.length + ' 项';
+  }
+  $('#mgCount').textContent = gridCache.count;
 }
 
 // 最近打开的文件夹：从设置读取，点一下直接载入（持久化在 userData）
@@ -826,12 +938,25 @@ async function renderRecent() {
 }
 
 // ------------------------------------------------------------------ 对比
+// 对比屏的下拉选项：每个文件一条 <option>，5000 张就是 1 万个节点。
+// 之前每次切到对比屏都重建一遍，现在只在文件列表真的换了（数组换了引用）时重建。
+let cmpCache = { files: null, html: '' };
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+  ));
+}
+
 function initCompare() {
-  const opts = state.files.map((f, i) => `<option value="${i}">${f.name}</option>`).join('');
   const a = $('#cmpA');
   const b = $('#cmpB');
-  a.innerHTML = opts;
-  b.innerHTML = opts;
+  if (cmpCache.files !== state.files) {
+    const opts = state.files.map((f, i) => `<option value="${i}">${escapeHtml(f.name)}</option>`).join('');
+    a.innerHTML = opts;
+    b.innerHTML = opts;
+    cmpCache = { files: state.files, html: opts };
+  }
   if (state.files.length > 1) {
     a.value = String(state.index >= 0 ? state.index : 0);
     b.value = String((state.index + 1) % state.files.length);
@@ -1160,6 +1285,8 @@ function toggleLens() {
   setOp(state.lens ? '放大镜已开启（移动鼠标查看，L 关闭）' : '放大镜已关闭');
 }
 
+let lensImgUrl = '';
+
 function moveLens(cx, cy) {
   if (!state.lens) return;
   const m = state.meta;
@@ -1173,7 +1300,11 @@ function moveLens(cx, cy) {
   const iy = (cy - img.top) / state.view.z;
   lens.style.left = (cx - size / 2) + 'px';
   lens.style.top = (cy - size / 2) + 'px';
-  lens.style.backgroundImage = `url("${R.imageUrl(m.path)}")`;
+  const url = R.imageUrl(m.path);
+  if (url !== lensImgUrl) {
+    lens.style.backgroundImage = `url("${url}")`;
+    lensImgUrl = url;
+  }
   lens.style.backgroundSize = `${m.width * state.view.z * zoom}px ${m.height * state.view.z * zoom}px`;
   lens.style.backgroundPosition = `${-ix * state.view.z * zoom + size / 2}px ${-iy * state.view.z * zoom + size / 2}px`;
 }
@@ -1327,6 +1458,10 @@ async function trashCurrent() {
   const wasIndex = state.index;
   state.files = state.files.filter((f) => !samePath(f.path, m.path));
   state.tabs = state.tabs.filter((t) => !samePath(t, m.path));
+  // 同步把文件夹缓存里的同一条剔掉，否则切换到别的标签再回来时，
+  // 已经删掉的文件会「复活」（缓存里还是删之前那份列表）
+  const cached = folderCache.get(state.folder);
+  if (cached) cached.files = cached.files.filter((f) => !samePath(f.path, m.path));
   renderFilm();
   renderGrid();
   if (!state.files.length) {
@@ -1467,6 +1602,7 @@ function bind() {
   let dragging = false;
   let lastX = 0;
   let lastY = 0;
+  let panRaf = 0;
   vp.addEventListener('mousedown', (e) => {
     if (e.button !== 0 || state.crop.on || state.lens) return;
     dragging = true;
@@ -1475,18 +1611,26 @@ function bind() {
     vp.classList.add('grabbing');
   });
   window.addEventListener('mousemove', (e) => {
-    const r = vp.getBoundingClientRect();
-    moveLens(e.clientX - r.left, e.clientY - r.top);
+    // 只有开着放大镜时才需要量视口。原来无条件 getBoundingClientRect()，
+    // 等于每次鼠标移动都强制同步布局一次 —— 高回报率鼠标下这是纯浪费。
+    if (state.lens) {
+      const r = vp.getBoundingClientRect();
+      moveLens(e.clientX - r.left, e.clientY - r.top);
+    }
     if (!dragging) return;
     state.view.tx += e.clientX - lastX;
     state.view.ty += e.clientY - lastY;
     lastX = e.clientX;
     lastY = e.clientY;
-    updateStage();
+    // 合并到下一帧：1000Hz 的鼠标一秒能发上千次事件，逐次写 transform 会掉帧
+    if (!panRaf) {
+      panRaf = requestAnimationFrame(() => { panRaf = 0; updateStage(); });
+    }
   });
   window.addEventListener('mouseup', () => {
     dragging = false;
     vp.classList.remove('grabbing');
+    if (panRaf) { cancelAnimationFrame(panRaf); panRaf = 0; updateStage(); }
   });
   vp.addEventListener('dblclick', () => {
     if (Math.abs(state.view.z - 1) < 0.02) fit();
@@ -1543,8 +1687,16 @@ function bind() {
   $$('#segTheme button').forEach((b) =>
     b.addEventListener('click', () => setTheme(b.dataset.mode)));
 
-  // 管理屏
-  $('#mgSize').addEventListener('input', renderGrid);
+  // 管理屏：格子尺寸即时跟手，只有缩略图档位真的变了才重建（否则拖一次滑块
+  // 会把整个文件夹的缩略图重新解码十几遍）
+  let gridTimer = null;
+  $('#mgSize').addEventListener('input', () => {
+    const size = +$('#mgSize').value;
+    $('#grid').style.setProperty('--cell', size + 'px');
+    if (gridThumbWidth(size) === gridCache.tw) return;
+    clearTimeout(gridTimer);
+    gridTimer = setTimeout(renderGrid, 140);
+  });
 
   // 对比屏
   $('#cmpA').addEventListener('change', syncCompare);

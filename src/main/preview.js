@@ -90,6 +90,14 @@ function inspectBmp(buf, start) {
   return { end, width, height };
 }
 
+// 取一块「独立」的预览数据。
+// 注意：不能直接 subarray —— Buffer 的切片与原 Buffer 共享同一块 ArrayBuffer，
+// 主进程那个 IMG_CACHE 会把整块扫描窗口一起留住。实测一张 RAW（扫描窗口 96MB）
+// 只挖出 41 字节的预览，缓存条目却仍占着 96MB。必须复制一份。
+function cut(buf, start, end) {
+  return Buffer.from(buf.subarray(start, end));
+}
+
 // ---------- PSD 缩略图资源（8BIM 1036 / 1033） ----------
 
 function psdThumbnail(buf) {
@@ -122,7 +130,7 @@ function psdThumbnail(buf) {
         if (fmt === 1) {
           const jpeg = inspectJpeg(buf, payload);
           if (jpeg) {
-            return { buffer: buf.subarray(payload, jpeg.end), mime: 'image/jpeg', width: w, height: h, source: 'PSD 缩略图资源' };
+            return { buffer: cut(buf, payload, jpeg.end), mime: 'image/jpeg', width: w, height: h, source: 'PSD 缩略图资源' };
           }
         } else if (fmt === 0 && payloadLen > 0) {
           // 未压缩 RGB：包一层 BMP 头方便 Chromium 直接显示
@@ -207,7 +215,7 @@ function scanEmbedded(buf, offset = 0) {
 
   if (!best) return null;
   return {
-    buffer: buf.subarray(best.start, best.end),
+    buffer: cut(buf, best.start, best.end),
     mime: best.mime,
     width: best.width,
     height: best.height,
