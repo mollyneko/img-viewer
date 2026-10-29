@@ -255,6 +255,12 @@ input, select { font: inherit; }
   pointer-events: none;   /* 图纸本身不该抢鼠标：平移/缩放仍由视口处理 */
 }
 .cad-stage.on { display: block; }
+/* CDR 是一张「纸」：libcdr 转出的 SVG 背景是透明的，深色主题下会变成
+   黑底黑线、什么都看不见。铺一层纸白 + 一道细边，观感和 CorelDRAW 里一致。 */
+.cad-mode.cad-flat .cad-stage.on { background: #fff; }
+[data-theme="dark"] .cad-mode.cad-flat .cad-stage.on {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .14), 0 10px 30px rgba(0, 0, 0, .45);
+}
 .cad-stage svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .cad-stage.lens-off { visibility: hidden; }
 .cad-stage.anim { transition: transform .16s cubic-bezier(.2, .7, .3, 1); }
@@ -293,6 +299,11 @@ input, select { font: inherit; }
 .cad-mode .pill.cad-only { display: inline-flex; }
 /* CAD 模式下没有意义的位图工具 */
 .cad-mode .tbtn.cad-off { display: none; }
+/* CDR/CMX 也进矢量模式，但它的 SVG 是扁平的、没有图层 —— 整块图层面板收起 */
+.cad-mode.cad-flat .sec.cad-only { display: none; }
+/* 多页页码：上一页/下一页到头就置灰，别让人反复点空 */
+.pill-bar .tbtn:disabled { opacity: .32; cursor: default; }
+.pill-bar .tbtn:disabled:hover { background: transparent; }
 
 /* 图层树 */
 .cad-layers { display: flex; flex-direction: column; gap: 1px; max-height: 214px; overflow-y: auto; }

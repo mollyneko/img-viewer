@@ -194,7 +194,10 @@ function handleProtocol() {
 
     // ---- 矢量（CDR=libcdr 转 SVG / DWG=LibreDWG 转 SVG，缓存命中才有）----
     if (host === 'svg') {
-      const hit = (await cdr.peek(abs, 0)) || (await dwg.peek(abs, isDarkTheme()));
+      // pg：CDR/CMX 的页码。多页文件每页是一份独立 SVG，不带页码就永远拿到第 1 页
+      // （翻页只是把页码数字改了、画面不动）。
+      const pg = Math.max(0, parseInt(u.searchParams.get('pg') || '0', 10) || 0);
+      const hit = (await cdr.peek(abs, pg)) || (await dwg.peek(abs, isDarkTheme()));
       if (!hit) return new Response('no vector', { status: 404 });
       const data = await fsp.readFile(hit.svgPath);
       return new Response(data, {
@@ -463,6 +466,8 @@ async function windowProbe() {
               on: cad.classList.contains('on'),
               nodes: cad.querySelectorAll('*').length,
               layers: document.querySelectorAll('#cadLayers .cad-lrow').length,
+              // CDR/CMX 没有图层，靠「纸面」模式识别；两种都算矢量内联成功
+              paper: document.body.classList.contains('cad-flat'),
               w: cad.clientWidth, h: cad.clientHeight,
               size: cad.style.width + 'x' + cad.style.height,
               visible: getComputedStyle(cad).display,
@@ -492,7 +497,9 @@ async function windowProbe() {
         const st = stageWait > 3000 ? await readStage() : st3;
         out.stage = { ...st, at3s: st3, logs: logs.slice(0, 20) };
         // CAD 走内联 SVG（#cadStage），位图走 #stage —— 两条链路任一条成立即算过
-        const cadOk = !!(st.cad && st.cad.on && st.cad.nodes > 20 && st.cad.layers > 0);
+        // CDR/CMX 的 SVG 是扁平的（没有图层），所以「纸面模式 + 有节点」也算过
+        const cadOk = !!(st.cad && st.cad.on && st.cad.nodes > 20
+          && (st.cad.layers > 0 || st.cad.paper));
         if (!cadOk && (!st.complete || !st.nw)) out.ok = false;
       } catch (e) {
         out.stage = { error: String(e).slice(0, 300) };
@@ -550,13 +557,17 @@ async function windowProbe() {
             const res = {};
             const stage = document.querySelector('#cadStage');
             const groups = [...stage.querySelectorAll('g[data-layer]')];
+            res.layers = groups.length;
             res.before = groups.map((g) => g.style.display || 'on');
-            const eye = document.querySelector('#cadLayers .cad-eye');
-            if (eye) { eye.click(); await wait(60); res.afterToggle = groups[0].style.display; eye.click(); await wait(60); res.afterToggle2 = groups[0].style.display || 'on'; }
-            document.querySelector('#cadAllOff').click(); await wait(80);
-            res.allOff = groups.every((g) => g.style.display === 'none');
-            document.querySelector('#cadAllOn').click(); await wait(80);
-            res.allOn = groups.every((g) => g.style.display !== 'none');
+            // CDR/CMX 没有图层分组，图层那几项跳过（空数组的 every() 恒真，会假通过）
+            if (groups.length) {
+              const eye = document.querySelector('#cadLayers .cad-eye');
+              if (eye) { eye.click(); await wait(60); res.afterToggle = groups[0].style.display; eye.click(); await wait(60); res.afterToggle2 = groups[0].style.display || 'on'; }
+              document.querySelector('#cadAllOff').click(); await wait(80);
+              res.allOff = groups.every((g) => g.style.display === 'none');
+              document.querySelector('#cadAllOn').click(); await wait(80);
+              res.allOn = groups.every((g) => g.style.display !== 'none');
+            }
             // 测量
             document.querySelector('#btnMeasure').click(); await wait(50);
             const p1 = at(0.35, 0.4), p2 = at(0.65, 0.62);
@@ -577,10 +588,28 @@ async function windowProbe() {
             document.querySelector('#btnCadWin').click(); await wait(40);
             res.coord = (document.querySelector('#coordPill') || {}).textContent || '';
             res.hint = (document.querySelector('#emptyHint') || {}).style.display;
+            // 多页翻页（CDR/CMX）：页码条可见才算这个能力真的接上了
+            const bar = document.querySelector('#pageBar');
+            if (bar && bar.style.display !== 'none') {
+              const pn = document.querySelector('#pageNow');
+              const before = (pn || {}).textContent;
+              document.querySelector('#pageNext').click();
+              await wait(1200);
+              res.page = {
+                bar: true, before,
+                after: (document.querySelector('#pageNow') || {}).textContent,
+                total: (document.querySelector('#pageTotal') || {}).textContent,
+                perf: (document.querySelector('#perfPill') || {}).innerText || '',
+              };
+            } else {
+              res.page = { bar: false };
+            }
             return res;
           })()`);
           out.cadTest = r;
-          if (!r || !r.allOff || !r.allOn || !(r.measure && r.measure.lines === 1)) out.ok = false;
+          // 没有图层的格式（CDR/CMX）不要求 allOff/allOn；测量线必须有
+          const layerOk = !r || !r.layers || (r.allOff && r.allOn);
+          if (!r || !layerOk || !(r.measure && r.measure.lines === 1)) out.ok = false;
         } catch (e) {
           out.cadTest = { error: String(e).slice(0, 300) };
           out.ok = false;
@@ -794,20 +823,20 @@ function registerIpc() {
   if (scanner.PREVIEW.has(ext) || isCad) {
     const isCdr = cdr.supported(ext) && cdr.toolConfigured();
     const isDwg = isCad && dwg.supported(ext);
-    // 只有在「最终会以矢量方式显示」时才预热矢量引擎：
-    // 有内嵌预览的 CDR/CMX 直接走预览，不需要（也不该）跑 libcdr，
-    // 否则只是白白起一个外部进程，还白推一条渲染层根本没订阅的 cdr:vector 消息。
     let pv = null;
     if (scanner.PREVIEW.has(ext)) pv = await getPreview(abs, false).catch(() => null);
-    const willBeVector = isCad || (isCdr && !pv);
 
-    if (willBeVector) {
-      const tag = isCdr ? 'cdr' : 'dwg';
-      const logFail = (err) => logDiag(tag, `矢量渲染失败 ${abs}: ${err && err.message || err}`);
-      if (isCdr) cdr.warmup(abs, (e) => { if (e) logFail(e); });
-      if (isDwg) dwg.warmup(abs, (e) => { if (e) logFail(e); }, { dark: isDarkTheme() });
-      return { ok: true, kind: 'vector', ...base, width: 0, height: 0 };
-    }
+    // 矢量引擎一律预热。CDR 以前「有内嵌预览就直接用预览」，等于永远停在
+    // 缩略图上：放大会糊、看不出线宽、也没法量尺寸。现在改成
+    // 「预览先上屏（秒开）→ 矢量在后台补上（清晰、可测量）」，
+    // 预览只当占位，不再当最终结果。
+    const tag = isCdr ? 'cdr' : 'dwg';
+    const logFail = (err) => logDiag(tag, `矢量渲染失败 ${abs}: ${err && err.message || err}`);
+    if (isCdr) cdr.warmup(abs, (e) => { if (e) logFail(e); });
+    if (isDwg) dwg.warmup(abs, (e) => { if (e) logFail(e); }, { dark: isDarkTheme() });
+
+    if (isCad) return { ok: true, kind: 'vector', ...base, width: 0, height: 0 };
+    if (isCdr && !pv) return { ok: true, kind: 'vector', ...base, width: 0, height: 0 };
 
     if (!pv) {
       return {
@@ -820,6 +849,8 @@ function registerIpc() {
     return {
       ok: true,
       kind: 'preview',
+      // CDR/CMX 标记「矢量还在后台转」：渲染层先拿预览占屏，等矢量就绪再热替换
+      ...(isCdr ? { vectorPending: true } : {}),
       previewSource: pv.source,
       ...base,
       width: pv.width,
@@ -840,16 +871,19 @@ function registerIpc() {
   });
 
   // CDR/CMX/DWG/DXF 矢量渲染：返回缓存或等待转换完成（渲染层切回页签时主动拉取）
-  ipcMain.handle('cdr:render', async (_e, p) => {
+  ipcMain.handle('cdr:render', async (_e, p, pageIn) => {
     if (!p) return { ok: false, reason: 'no-path' };
     const abs = allow(p);
     if (!cdr.supported(abs) && !dwg.supported(abs)) return { ok: false, reason: 'unsupported' };
+    // 页码只对 CDR/CMX 有意义；夹一下范围，避免渲染层传进来 NaN 让 libcdr 越界
+    const page = Math.max(0, Math.min(9999, parseInt(pageIn, 10) || 0));
     try {
       if (dwg.supported(abs)) {
         const r = await dwg.render(abs, { dark: isDarkTheme() });
         return {
           ok: true,
           pages: 1,
+          page: 0,
           width: r.width,
           height: r.height,
           cached: r.cached,
@@ -857,6 +891,7 @@ function registerIpc() {
           // 图层与视图范围：渲染层用作图层面板与「像素 ↔ 图纸坐标」换算
           layers: Array.isArray(r.layers) ? r.layers : [],
           box: r.box || null,
+          unit: '',
           cadWidth: r.cadWidth || 0,
           cadHeight: r.cadHeight || 0,
           entities: r.entities || 0,
@@ -864,14 +899,22 @@ function registerIpc() {
         };
       }
       if (!cdr.toolConfigured()) return { ok: false, reason: 'no-tool' };
-      const r = await cdr.render(abs, 0);
+      const r = await cdr.render(abs, page);
       return {
         ok: true,
         pages: r.pages,
+        page: r.page || 0,
         width: r.width,
         height: r.height,
         cached: r.cached,
-        url: 'ratfile://svg?p=' + encodeURIComponent(abs) + '&t=' + Date.now(),
+        format: 'CDR',
+        // 让渲染层把这版 SVG 内联进 DOM（有它才谈得上坐标读数与框选放大）
+        inline: true,
+        // CDR 没有图层（librevenge 的 SVG 输出是扁平的），但页面几何是真的：
+        // box 让渲染层能报毫米坐标、能量两点距离、能框选放大。
+        box: r.box || null,
+        unit: r.unit || '',
+        url: 'ratfile://svg?p=' + encodeURIComponent(abs) + '&pg=' + (r.page || 0) + '&t=' + Date.now(),
       };
     } catch (err) {
       return { ok: false, reason: String((err && err.message) || err).slice(0, 160) };
@@ -1250,8 +1293,12 @@ async function main() {
   logDiag('dwg', `wasm=${dwgWasm} exists=${fs.existsSync(path.join(dwgWasm, 'libredwg-web.wasm'))}`);
 
   // 启动时把用户偏好主题恢复上（默认白天）
+  // RAT_PROBE_THEME 只在截图探针里覆盖一次，用来核对深色主题下的可读性
   const s = readSettings();
-  nativeTheme.themeSource = s.theme === 'dark' ? 'dark' : s.theme === 'system' ? 'system' : 'light';
+  const probeTheme = process.env.RAT_PROBE_THEME;
+  nativeTheme.themeSource = probeTheme === 'dark' ? 'dark'
+    : probeTheme === 'light' ? 'light'
+      : s.theme === 'dark' ? 'dark' : s.theme === 'system' ? 'system' : 'light';
 
   pendingPath = pathFromArgv(process.argv);
   if (pendingPath) allow(pendingPath);

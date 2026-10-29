@@ -23,7 +23,8 @@ contextBridge.exposeInMainWorld('rat', {
   openImage: (p) => ipcRenderer.invoke('image:open', p),
   imageBytes: (p) => ipcRenderer.invoke('image:bytes', p),
   // ---- CDR/CMX 矢量渲染 ----
-  cdrRender: (p) => ipcRenderer.invoke('cdr:render', p),
+  // page 从 0 起；只有 CDR/CMX 多页文档才用得到，DWG/DXF 会忽略
+  cdrRender: (p, page) => ipcRenderer.invoke('cdr:render', p, page),
   onCdrVector: on('cdr:vector'),
 
   // ---- EXIF ----
@@ -78,6 +79,6 @@ contextBridge.exposeInMainWorld('rat', {
   // ---- 程序版本（主进程通过 additionalArguments 注入，语义化版本，不含 V 前缀）----
   appVersion: (() => {
     const hit = process.argv.find((a) => a.startsWith('--rat-app-version='));
-    return hit ? hit.slice('--rat-app-version='.length) : '1.0.3';
+    return hit ? hit.slice('--rat-app-version='.length) : '1.0.4';
   })(),
 });

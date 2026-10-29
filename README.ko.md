@@ -22,7 +22,7 @@
 
 다른 뷰어가 못 여는 것들을 여는 것이 특징입니다:
 
-- **CDR / CMX**(CorelDRAW) — 내장된 libcdr 벡터 엔진으로 CorelDRAW를 설치하지 않아도 보고, 폰트 의존성도 없고 번짐도 없습니다.
+- **CDR / CMX**(CorelDRAW) — 내장된 libcdr 벡터 엔진으로 CorelDRAW를 설치하지 않아도 보고, 폰트 의존성도 없고 번짐도 없습니다. 내장 프리뷰를 먼저 보여준 뒤 실제 벡터로 교체하며, 밀리미터 좌표·두 점 거리 측정·범위 확대·여러 페이지 넘기기를 지원합니다.
 - **DWG / DXF**(CAD 도면) — LibreDWG 내장. AutoCAD 없이 CAD 파일을 읽습니다. 실제 벡터로 그리며 해치·선종류·선가중치를 살리고, 레이어 트리 표시/숨김·단독 보기, 커서 좌표, 두 점 거리 측정, 창 확대까지 지원합니다.
 - **PSD / PSB, HEIC, 카메라 RAW** — 내장 프리뷰를 꺼내 즉시 열고, 전체 파싱을 기다리지 않습니다. TIFF는 내장 디코더로 직접 디코딩합니다.
 
@@ -32,8 +32,8 @@
 
 | 파일 | 종류 | 대상 |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.3.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.3.exe)** | 설치 프로그램(NSIS) | 일상 사용. 설치 폴더 선택, 바탕화면/시작 메뉴 바로가기 생성, 파일 연결 등록 지원. |
-| **[RatViewer-Portable-V1.0.3.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.3.exe)** | 이식형(단일 파일) | USB에 넣고 휴대. 더블클릭으로 실행, 레지스트리 기록 없음, 흔적 없음. |
+| **[RatViewer-Setup-V1.0.4.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.4.exe)** | 설치 프로그램(NSIS) | 일상 사용. 설치 폴더 선택, 바탕화면/시작 메뉴 바로가기 생성, 파일 연결 등록 지원. |
+| **[RatViewer-Portable-V1.0.4.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.4.exe)** | 이식형(단일 파일) | USB에 넣고 휴대. 더블클릭으로 실행, 레지스트리 기록 없음, 흔적 없음. |
 
 > **"게시자 알 수 없음" 경고에 대하여**
 > 설치 프로그램은 코드 서명이 되어 있지 않습니다(EV 인증서는 저렴하지 않습니다). 첫 실행 시 Windows SmartScreen이 "PC를 보호했습니다"라고 띄웁니다. "자세히 알아보기" → "실행"을 누르세요. 신경 쓰인다면 [소스에서 빌드](#소스에서-빌드)할 수도 있습니다. Releases 페이지에는 `SHA256SUMS.txt`도 있어 `certutil -hashfile <파일> SHA256`로 무결성을 확인할 수 있습니다.
@@ -104,7 +104,7 @@
 | SVG | 네이티브 디코드 | 벡터, 손실 없이 확대 |
 | TIFF / TIF | 로컬 디코딩(내장) | 비압축 / LZW / Deflate / PackBits 지원. JPEG 압축 TIFF는 미지원 |
 | PSD / PSB | 내장 프리뷰 추출 | "최대 호환성" 옵션으로 저장된 파일 필요 |
-| **CDR / CMX** | 프리뷰 + libcdr 전체 벡터 | 내장 프리뷰가 없을 때만 벡터 엔진으로 폴백 |
+| **CDR / CMX** | libcdr 벡터(프리뷰 먼저 표시) | 내장 프리뷰로 즉시 표시한 뒤 벡터로 교체. 밀리미터 좌표·거리 측정·범위 확대·페이지 넘기기 지원. 레이어 트리 없음(libcdr의 SVG 출력은 평면) |
 | **DWG / DXF** | LibreDWG 벡터 파싱 | 해치(솔리드+패턴, 다방향 정의선), 선종류, 선가중치, 레이어 표시/숨김·단독 보기, 좌표, 측정, 창 확대 지원. DXF는 gb18030 / Big5 / UTF-16을 자동 판별하는 순수 JS 파서 |
 | HEIC / HEIF | 내장 프리뷰 추출 | JPEG 프리뷰가 들어 있는 파일만 가능 |
 | CR2 / CR3 / NEF / ARW / DNG 등 RAW | 내장 JPEG 프리뷰 추출 | 주요 카메라 기종 |
@@ -195,9 +195,9 @@ Electron 33 · 프레임워크 없는 일반 HTML/CSS/JS(렌더러)· libcdr 0.1
 
 - Windows만 지원. 렌더러 자체는 크로스 플랫폼이지만 파일 연결, CDR 변환기, 패키징이 Win32에 묶여 있습니다.
 - 설치 프로그램은 미서명이라 첫 실행 시 SmartScreen이 뜹니다(위 참조).
-- 내장 프리뷰가 있는 CDR/CMX는 **그 프리뷰를 유지하고 벡터로 교체하지 않습니다**: 일부 파일에서 libcdr이 내장 비트맵을 페이지 밖으로 빼내고, 흰 글자는 밝은 배경에서 잘 안 보이므로 교체는 오히려 퇴보입니다. 내장 프리뷰가 없는 CDR만 벡터 엔진을 씁니다.
+- CDR/CMX는 항상 벡터로 승격됩니다: 내장 프리뷰는 자리표시자일 뿐이고, libcdr 변환이 끝나면 교체됩니다. 일부 파일에서 libcdr이 내장 비트맵을 페이지 밖으로 빼내거나 폰트·그라디언트를 놓치기도 합니다. 벡터 화면이 이상하다면 libcdr의 해석 한계이지 렌더링 버그가 아닙니다.
 - 카메라 RAW는 내장 JPEG 프리뷰만 읽고 전체 RAW 디코드는 하지 않습니다(보기에 충분. 화질을 원하면 Lightroom).
-- CDR / DWG 같은 벡터 도면은 히스토그램을 표시할 수 없습니다: 브라우저는 canvas에 그린 SVG에서 픽셀을 다시 읽어오는 것을 금지합니다(악의적 SVG의 정보 유출 방지). 그래서 벡터의 히스토그램 칸에는 "픽셀을 읽을 수 없음"이 표시됩니다. 래스터 형식은 영향 없음.
+- DWG / DXF 같은 벡터 도면은 히스토그램을 표시할 수 없습니다: 브라우저는 canvas에 그린 SVG에서 픽셀을 다시 읽어오는 것을 금지합니다(악의적 SVG의 정보 유출 방지). 그래서 벡터의 히스토그램 칸에는 "픽셀을 읽을 수 없음"이 표시됩니다. CDR/CMX는 내장 프리뷰로 히스토그램을 만들 수 있어 표시됩니다. 래스터 형식은 영향 없음.
 - PDF / AI / EPS는 미지원.
 
 ## 서드파티 구성 요소 및 라이선스

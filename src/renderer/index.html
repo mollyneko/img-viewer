@@ -152,6 +152,12 @@
 
           <div class="floating float-tl">
             <span class="pill" id="fmtPill">—</span>
+            <!-- CDR/CMX 多页：页码与前后翻页（只有 pages>1 才出现） -->
+            <span class="pill-bar" id="pageBar" style="display:none">
+              <button class="tbtn" id="pagePrev" title="上一页">‹</button>
+              <span class="lbl"><b id="pageNow">1</b> / <span id="pageTotal">1</span></span>
+              <button class="tbtn" id="pageNext" title="下一页">›</button>
+            </span>
           </div>
           <div class="floating float-tr">
             <span class="pill" id="previewPill" style="display:none">内嵌预览</span>

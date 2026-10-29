@@ -27,7 +27,7 @@ A pure image viewer. No layers, no filter curves, no attempt to become Photoshop
 
 What makes it different is the stuff other viewers can't open:
 
-- **CDR / CMX** (CorelDRAW) — a built-in libcdr vector engine, so you can view them without CorelDRAW installed, with no font dependency and no blur.
+- **CDR / CMX** (CorelDRAW) — a built-in libcdr vector engine, so you can view them without CorelDRAW installed, with no font dependency and no blur. The embedded preview is shown first and then hot-swapped to real vectors, with millimetre coordinates, a two-point measure tool, window zoom and page navigation for multi-page documents.
 - **DWG / DXF** (CAD drawings) — LibreDWG built in, so you can read CAD files without AutoCAD. Drawings render as real vectors with hatches, line types and line weights, plus a layer tree you can toggle, on-canvas coordinates, a two-point measure tool and window zoom.
 - **PSD / PSB, HEIC, camera RAW** — it pulls the embedded preview and opens instantly, without waiting for a full parse. TIFF is decoded in-app instead, so plain scans open too.
 
@@ -37,8 +37,8 @@ Grab the latest build (Windows 10 / 11, 64-bit) from the **[Releases page](https
 
 | File | Type | For |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.3.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.3.exe)** | Installer (NSIS) | Everyday use. Choose the install folder, create desktop/start-menu shortcuts, and register file associations. |
-| **[RatViewer-Portable-V1.0.3.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.3.exe)** | Portable (single file) | Carry it on a USB stick — double-click to run, no registry writes, no leftovers. |
+| **[RatViewer-Setup-V1.0.4.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.4.exe)** | Installer (NSIS) | Everyday use. Choose the install folder, create desktop/start-menu shortcuts, and register file associations. |
+| **[RatViewer-Portable-V1.0.4.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.4.exe)** | Portable (single file) | Carry it on a USB stick — double-click to run, no registry writes, no leftovers. |
 
 > **About the "unknown publisher" warning**
 > The installer isn't code-signed (an EV certificate isn't cheap). On first run Windows SmartScreen may say "Windows protected your PC." Click "More info" → "Run anyway." If that bothers you, you can always [build from source](#build-from-source).
@@ -111,7 +111,7 @@ Three layers: **native decode** → **extract embedded preview** → **vector en
 | SVG | Native decode | Vector, lossless scaling |
 | TIFF / TIF | Local decode, built in | Uncompressed, LZW, Deflate, PackBits; JPEG-compressed TIFF isn't supported |
 | PSD / PSB | Extract embedded preview | Requires saving with "Maximize Compatibility" |
-| **CDR / CMX** | Preview + libcdr full vector | Falls back to the vector engine (background render + hot-swap) only when there's no embedded preview |
+| **CDR / CMX** | libcdr vector (preview shown first) | Embedded preview appears instantly, then swaps to vectors; mm coordinates, measure, window zoom, page navigation; no layer tree (libcdr's SVG output is flat) |
 | **DWG / DXF** | LibreDWG vector parse | Hatches (solid + pattern, multi-definition lines), line types, line weights, layers with toggle/solo, coordinates, measure, window zoom; DXF uses a pure-JS parser that auto-detects gb18030 / Big5 / UTF-16 encoding |
 | HEIC / HEIF | Extract embedded preview | Only works when the file carries a JPEG preview |
 | CR2 / CR3 / NEF / ARW / DNG and other RAW | Extract embedded JPEG preview | Mainstream camera models |
@@ -203,8 +203,8 @@ Architecture details, performance targets, and trade-off notes are in [`design/a
 
 - Windows only. The renderer is cross-platform; the file association, CDR converter, and packaging are tied to Win32.
 - The installer is unsigned, so there's a SmartScreen prompt on first run (see above).
-- CDR/CMX files **with an embedded preview keep that preview and are not hot-swapped to vector**: on some files libcdr moves embedded bitmaps out of the page, and white text reads worse on a light background, so hot-swapping would be a downgrade. Only CDR files without an embedded preview use the vector engine.
-- Vector images (CDR / DWG) have no histogram: browsers forbid reading pixels back from an SVG drawn to a canvas (a malicious-SVG information-leak guard), so the histogram area shows "pixels unavailable." Raster formats are unaffected.
+- CDR/CMX always upgrade to vectors: the embedded preview is only a placeholder shown while libcdr converts in the background. On some files libcdr moves embedded bitmaps out of the page or drops fonts/gradients, so if a drawing looks wrong in vector mode, that's a libcdr limitation rather than a rendering bug.
+- Vector images (DWG / DXF) have no histogram: browsers forbid reading pixels back from an SVG drawn to a canvas (a malicious-SVG information-leak guard), so the histogram area shows "pixels unavailable." CDR/CMX still have a histogram because it's built from the embedded preview. Raster formats are unaffected.
 - Camera RAW reads the embedded JPEG preview only, not a full RAW decode (fine for viewing; use Lightroom for quality).
 - PDF / AI / EPS not yet supported.
 

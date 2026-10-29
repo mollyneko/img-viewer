@@ -22,7 +22,7 @@
 
 特别之处在于它能直接看一些同类看图软件打不开的东西：
 
-- **CDR / CMX**（CorelDRAW）—— 内置 libcdr 矢量引擎，不装 CorelDRAW 也能看，无字体依赖、不糊
+- **CDR / CMX**（CorelDRAW）—— 内置 libcdr 矢量引擎，不装 CorelDRAW 也能看，无字体依赖、不糊；内嵌预览先上屏，随后换成真矢量，可读毫米坐标、量两点距离、框选放大，多页文档能翻页
 - **DWG / DXF**（CAD 图纸）—— 内置 LibreDWG，看图不用开 AutoCAD。按真矢量渲染，填充图案、线型、线宽都在；还有图层树可显隐/单看、画布坐标、两点测量、窗口放大
 - **PSD / PSB、HEIC、相机 RAW** —— 直接抽取内嵌预览，秒开不等解析；TIFF 由内置解码器直接解，扫描件也能开
 
@@ -32,8 +32,8 @@
 
 | 文件 | 类型 | 适合谁 |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.3.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.3.exe)** | 安装版（NSIS） | 日常使用。可选安装目录、创建桌面/开始菜单快捷方式、支持注册文件关联 |
-| **[RatViewer-Portable-V1.0.3.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.3.exe)** | 免安装版（单文件） | 放 U 盘里随身带，双击即用，不写注册表、不留痕 |
+| **[RatViewer-Setup-V1.0.4.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.4.exe)** | 安装版（NSIS） | 日常使用。可选安装目录、创建桌面/开始菜单快捷方式、支持注册文件关联 |
+| **[RatViewer-Portable-V1.0.4.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.4.exe)** | 免安装版（单文件） | 放 U 盘里随身带，双击即用，不写注册表、不留痕 |
 
 > **关于「未知发布者」警告**
 > 安装包未购买代码签名证书（EV 证书年费不便宜）。首次运行 Windows SmartScreen 会提示"已保护你的电脑"，点「更多信息」→「仍要运行」即可。如果你介意，也可以直接[从源码构建](#从源码构建-1)。Releases 页面同时提供 `SHA256SUMS.txt`，可用 `certutil -hashfile <文件> SHA256` 核对完整性。
@@ -104,7 +104,7 @@
 | SVG | 内置直解 | 矢量，可无损放大 |
 | TIFF / TIF | 本地解码（内置） | 支持未压缩 / LZW / Deflate / PackBits；JPEG 压缩的 TIFF 不支持 |
 | PSD / PSB | 抽取内嵌预览 | 需保存时勾选「最大兼容」，才有缩略图资源 |
-| **CDR / CMX** | 预览 + libcdr 全量矢量 | 无内嵌预览时才启动矢量引擎后台渲染并热替换 |
+| **CDR / CMX** | libcdr 矢量（预览先上屏） | 内嵌预览秒开，随后热替换为矢量；毫米坐标、两点测量、窗口放大、翻页；无图层树（libcdr 输出的 SVG 是扁平的） |
 | **DWG / DXF** | LibreDWG 矢量解析 | 支持填充（实体+图案，多方向定义线）、线型、线宽、图层显隐/单看、坐标、测量、窗口放大；DXF 走纯 JS 解析，自动识别 gb18030 / Big5 / UTF-16 编码 |
 | HEIC / HEIF | 抽取内嵌预览 | 仅当文件内带 JPEG 预览时可用 |
 | CR2 / CR3 / NEF / ARW / DNG 等 RAW | 抽取内嵌 JPEG 预览 | 主流相机机型 |
@@ -195,9 +195,9 @@ Electron 33 · 原生 HTML/CSS/JS（渲染层无框架）· libcdr 0.1.9 + libre
 
 - 只支持 Windows。渲染层是跨平台的，主要是文件关联、CDR 转换器、打包流程绑定了 Win32
 - 安装包未签名，首次运行会有 SmartScreen 提示（见上）
-- CDR/CMX 有内嵌预览的文件**保留预览图、不热替换成矢量**：libcdr 在某些文件上会把嵌入位图移出页面，且白字在浅色底上可见性更差，热替换反而是降级。只有无内嵌预览的 CDR 才走矢量渲染
+- CDR/CMX 一律升级到矢量：内嵌预览只是占位，libcdr 在后台转完就换掉。libcdr 在某些文件上会把嵌入位图移出页面、丢掉字体或渐变 —— 矢量模式下画面看着不对属于 libcdr 的解析限制，不是渲染 bug
 - 相机 RAW 只读内嵌 JPEG 预览，不做完整 RAW 解码（正常看图足够，追求画质请用 Lightroom）
-- CDR / DWG 这类矢量图看不到直方图：浏览器不允许把 SVG 图片画到 canvas 后读回像素（恶意 SVG 的信息泄露防护），所以矢量图的直方图区会显示"无法读取像素"。位图格式不受影响
+- DWG / DXF 这类矢量图看不到直方图：浏览器不允许把 SVG 图片画到 canvas 后读回像素（恶意 SVG 的信息泄露防护），所以矢量图的直方图区会显示"无法读取像素"。CDR/CMX 仍能出直方图（取自内嵌预览），位图格式不受影响
 - 暂不支持 PDF / AI / EPS
 
 ## 第三方组件与许可

@@ -46,6 +46,7 @@ const PREVIEW_EXT = new Set(['.cdr', '.cmx', '.psd', '.psb', '.tif', '.tiff', '.
   '.cr2', '.cr3', '.crw', '.nef', '.nrw', '.arw', '.srf', '.sr2', '.dng',
   '.orf', '.rw2', '.raf', '.pef', '.srw', '.mrw', '.x3f', '.raw']);
 const CAD_EXT = new Set(['.dwg', '.dxf']);
+const CDR_EXT = new Set(['.cdr', '.cmx']);
 // 矢量格式：缩略图与主画布必须同源同比例（不裁切），否则「预览」和「打开」两个样
 const VECTOR_EXT = new Set(['.cdr', '.cmx', '.dwg', '.dxf']);
 const NATIVE_EXT = new Set(['.jpg', '.jpeg', '.jfif', '.png', '.apng', '.webp', '.gif', '.bmp', '.ico', '.svg', '.avif']);
@@ -80,10 +81,14 @@ const state = {
   // CAD（DWG/DXF）专属状态：内联 SVG、图层、图纸坐标范围、测量/框选
   cad: {
     on: false,
+    kind: null,           // null | 'cad' | 'cdr' —— 决定要不要出图层面板
     degraded: false,      // 图纸过大退回 <img> 时为 true
     layers: [],
     groups: new Map(),
     box: null,
+    unit: '',             // CDR 的物理单位（mm）；DWG 为空
+    page: 0,              // CDR 当前页（从 0 起）
+    pages: 1,
     mode: null,           // null | 'measure' | 'win'
     measure: null,        // { a:{x,y}, b:{x,y}|null }
     win: null,
@@ -269,8 +274,11 @@ async function select(i) {
   syncAdjustUI();
   exitCrop(true);
   stopLens();
-  // DWG/DXF 才启用 CAD 交互层；其余格式保持原来的位图链路
-  setCadMode(CAD_EXT.has(extname(f.path)));
+  // 矢量交互层：DWG/DXF 与「能转成矢量的 CDR/CMX」共用同一套（坐标/测量/框选放大）；
+  // 只有内嵌预览、没有矢量引擎的格式保持原来的位图链路。
+  const fext = extname(f.path);
+  const vecOn = VECTOR_EXT.has(fext) && (info.kind === 'vector' || !!info.vectorPending);
+  setCadMode(vecOn, CAD_EXT.has(fext) ? 'cad' : 'cdr');
 
   const img = $('#stage');
   const t0 = performance.now();
@@ -309,9 +317,9 @@ async function select(i) {
       toast('这张图渲染失败了', true);
     };
     img.src = R.imageUrl(f.path);
-    // 有内嵌预览的 CDR/CMX：保留预览作为最终显示。
-    // 预览是 CorelDRAW 官方渲染，保真度最高；libcdr 转矢量有已知的降级
-    // （嵌入位图被移出页面、字体/渐变缺失），热替换反而让画面变差 —— 不替换。
+    // 预览只是占位：CDR/CMX 的矢量还在后台转，转好就热替换成矢量
+    // （放大不糊、能量尺寸）。右上角徽标可一键切回预览做对比。
+    if (info.vectorPending) requestVector(f.path);
   }
 
   renderInfo(info);
@@ -332,13 +340,13 @@ async function select(i) {
 // 主进程后台转 SVG；就绪后把画布换成真矢量。
 // 若用户已切到别的文件（或 SVG 没生成出来），静默放弃，不影响浏览。
 let vectorReqId = 0;
-async function requestVector(p) {
+async function requestVector(p, page) {
   const ext = extname(p).toLowerCase();
-  if (!['.cdr', '.cmx', '.dwg', '.dxf'].includes(ext)) return;
+  if (!VECTOR_EXT.has(ext)) return;
   const id = ++vectorReqId;
   let r = null;
   try {
-    r = await R.cdrRender(p);
+    r = await R.cdrRender(p, page || 0);
   } catch (e) {
     r = { ok: false, reason: String(e && e.message || e).slice(0, 120) };
   }
@@ -348,34 +356,17 @@ async function requestVector(p) {
     if (state.meta && samePath(state.meta.path, p) && state.meta.kind === 'vector') {
       setEmptyHint('矢量渲染失败', r && r.reason ? r.reason : '未知原因');
       toast('这个文件转不出矢量：' + (r && r.reason || '未知原因'), true);
+    } else if (state.meta && samePath(state.meta.path, p)) {
+      // CDR 还能看内嵌预览，提示一句就够，别把画面清掉
+      setOp('矢量解析不可用，仍显示内嵌预览');
     }
-    return;                                           // 「preview」类继续用内嵌预览
+    return;
   }
   if (!state.meta || !samePath(state.meta.path, p)) return;
 
-  // DWG/DXF 走内联 SVG（可切换图层、可读坐标）；CDR 继续走 <img>
-  if (CAD_EXT.has(ext)) {
-    await showCadVector(p, r);
-    return;
-  }
-
-  const img = $('#stage');
-  const t0 = performance.now();
-  img.onload = () => {
-    const ms = Math.round(performance.now() - t0);
-    fit();
-    $('#perfPill').innerHTML = `矢量 <b>${ms} ms</b> · ${Math.round(r.width)}×${Math.round(r.height)}`;
-    buildHistogram(p);
-  };
-  img.src = r.url;
-  $('#emptyHint').style.display = 'none';   // 矢量已上屏，把「渲染中」提示彻底收掉
-  state.meta.kind = 'vector';
-  state.meta.width = Math.round(r.width) || state.meta.width;
-  state.meta.height = Math.round(r.height) || state.meta.height;
-  $('#previewPill').textContent = '矢量渲染 · ' + (r.format || 'LIBCDR');
-  $('#previewPill').style.display = '';
-  renderInfo(state.meta);
-  setOp('矢量渲染完成' + (r.pages > 1 ? `（共 ${r.pages} 页）` : ''));
+  // DWG/DXF 与 CDR/CMX 一律内联 SVG：图层（有的话）、坐标、测量、
+  // 框选放大都要落在 DOM 上才做得了；内联失败时函数内部会退成 <img>。
+  await showCadVector(p, r);
 }
 
 /* ============================================================== CAD 看图 */
@@ -387,10 +378,15 @@ async function requestVector(p) {
 const isCadPath = (p) => CAD_EXT.has(extname(p));
 const MAX_INLINE_SVG = 12 * 1024 * 1024;   // 再大内联会让主线程卡顿，退回 <img>
 
-function setCadMode(on) {
-  state.cad.on = !!on;
+function setCadMode(on, kind) {
+  const yes = !!on;
+  state.cad.on = yes;
+  state.cad.kind = yes ? (kind || 'cad') : null;
   state.cad.degraded = false;
-  document.body.classList.toggle('cad-mode', !!on);
+  document.body.classList.toggle('cad-mode', yes);
+  // CDR 的 SVG 是扁平的（librevenge 的导出器没有图层概念），
+  // 用 cad-flat 把图层面板整块收起来，别摆一个永远空着的卡片。
+  document.body.classList.toggle('cad-flat', yes && state.cad.kind !== 'cad');
   resetCad();
 }
 
@@ -398,6 +394,9 @@ function resetCad() {
   state.cad.layers = [];
   state.cad.groups = new Map();
   state.cad.box = null;
+  state.cad.unit = '';
+  state.cad.page = 0;
+  state.cad.pages = 1;
   state.cad.measure = null;
   state.cad.mode = null;
   const st = $('#cadStage');
@@ -414,16 +413,25 @@ function resetCad() {
   $('#btnMeasure').classList.remove('on');
   $('#btnCadWin').classList.remove('on');
   $('#viewport').classList.remove('cad-cross');
+  const pg = $('#pageBar');
+  if (pg) pg.style.display = 'none';
 }
 
 // 把主进程转好的 SVG 内联进页面。只有内联成 DOM，图层显隐/坐标拾取才有落点。
+// DWG/DXF（有图层）与 CDR/CMX（扁平、但有页面几何）走的是同一条路：
+// 能内联就内联，内联失败才退成 <img>。
 async function showCadVector(p, r) {
   const meta = state.meta;
   const stage = $('#cadStage');
   const t0 = performance.now();
 
+  // 坐标换算要「画布像素」和「图纸范围」同比例。尺寸没拿到（width/height=0）时
+  // 画布会退回预览尺寸，两者比例就对不上了 —— 宁可不出坐标，也别给个错数。
+  const geoBox = r.box && r.width > 0 && r.height > 0 ? r.box : null;
+
+  const inlineable = !!r.inline || (Array.isArray(r.layers) && r.layers.length > 0);
   let text = null;
-  if (Array.isArray(r.layers) && r.layers.length) {
+  if (inlineable) {
     try {
       const res = await fetch(r.url);
       if (res.ok) text = await res.text();
@@ -470,12 +478,21 @@ async function showCadVector(p, r) {
     stage.replaceChildren();
     state.cad.layers = Array.isArray(r.layers) ? r.layers : [];
     state.cad.groups = new Map();
-    state.cad.box = r.box || null;
+    state.cad.box = geoBox;
+    state.cad.unit = r.unit || '';
+    state.cad.page = Number(r.page) || 0;
+    state.cad.pages = Math.max(1, Number(r.pages) || 1);
     state.cad.degraded = true;
-    meta.cadBox = r.box || null;
+    meta.kind = 'vector';
+    meta.previewSource = '';
+    meta.previewSize = 0;
+    meta.cadBox = geoBox;
+    meta.cadUnit = r.unit || '';
+    meta.cadPages = state.cad.pages;
     meta.cadLayers = state.cad.layers.length;
     meta.cadEntities = r.entities || 0;
     renderCadLayers();
+    renderPageBar();
     // 图层数与图元数要跟着刷新，否则信息面板会停留在解析前的「—」
     renderInfo(meta);
     updateStatus();
@@ -483,13 +500,22 @@ async function showCadVector(p, r) {
   }
 
   state.cad.degraded = false;
+  // 预览只是过渡态：矢量上屏后信息栏不该继续写「CDR · 预览 / 内嵌预览」
+  meta.kind = 'vector';
+  meta.previewSource = '';
+  meta.previewSize = 0;
   meta.width = Math.round(r.width) || meta.width;
   meta.height = Math.round(r.height) || meta.height;
-  state.cad.box = r.box || null;
+  state.cad.box = geoBox;
+  state.cad.unit = r.unit || '';
+  state.cad.page = Number(r.page) || 0;
+  state.cad.pages = Math.max(1, Number(r.pages) || 1);
   state.cad.layers = r.layers || [];
   state.cad.measure = null;
   state.cad.mode = null;
-  meta.cadBox = r.box || null;
+  meta.cadBox = geoBox;
+  meta.cadUnit = r.unit || '';
+  meta.cadPages = state.cad.pages;
   meta.cadLayers = state.cad.layers.length;
   meta.cadEntities = r.entities || 0;
 
@@ -497,17 +523,29 @@ async function showCadVector(p, r) {
   stage.style.height = meta.height + 'px';
   stage.replaceChildren(node);
   stage.classList.add('on');
+  // 位图这层要腾空，否则矢量图透明的地方会透出下面的旧预览（两张图叠在一起）
   $('#stage').removeAttribute('src');
   $('#emptyHint').style.display = 'none';
 
   bindCadGroups(node);
   renderCadLayers();
+  renderPageBar();
 
   const ms = Math.round(performance.now() - t0);
   fit();
-  $('#perfPill').innerHTML = `矢量 <b>${ms} ms</b> · ${meta.width}×${meta.height} · ${state.cad.layers.length} 层`;
-  $('#previewPill').textContent = '矢量渲染 · ' + (r.format || 'DWG');
+  const bw = state.cad.box ? state.cad.box.maxX - state.cad.box.minX : meta.width;
+  const bh = state.cad.box ? state.cad.box.maxY - state.cad.box.minY : meta.height;
+  const dim = state.cad.unit
+    ? `${fmtUnit(bw)} × ${fmtUnit(bh)} ${state.cad.unit}`
+    : `${meta.width}×${meta.height}`;
+  $('#perfPill').innerHTML = state.cad.layers.length
+    ? `矢量 <b>${ms} ms</b> · ${dim} · ${state.cad.layers.length} 层`
+    : `矢量 <b>${ms} ms</b> · ${dim}`;
+  const tag = state.cad.kind === 'cdr' ? 'CDR' : (r.format || 'DWG');
+  $('#previewPill').textContent = `矢量 · ${tag}`;
   $('#previewPill').style.display = '';
+  $('#fmtPill').textContent = tag;
+  if (state.cad.pages > 1) setOp(`第 ${state.cad.page + 1} / ${state.cad.pages} 页`);
   renderInfo(meta);
   updateStatus();
   buildHistogram(p);
@@ -569,6 +607,8 @@ function renderCadLayers() {
   const box = $('#cadLayers');
   box.innerHTML = '';
   const list = state.cad.layers || [];
+  // CDR/CMX 的 SVG 是扁平的（librevenge 不带图层），整块卡片由 .cad-flat 收起
+  if (state.cad.kind !== 'cad') return;
   if (state.cad.degraded) {
     box.innerHTML = '<div class="hint">图纸过大，已关闭图层交互（仍可正常缩放查看）</div>';
     return;
@@ -600,6 +640,32 @@ function renderCadLayers() {
   }
 }
 
+// ---- 多页（CDR/CMX）----
+// 像名片正反面、多页画册这类文件，libcdr 每页单独转一份 SVG；
+// 这里只负责页码与切页，样式沿用工具栏的 pill-bar。
+function renderPageBar() {
+  const bar = $('#pageBar');
+  if (!bar) return;
+  const total = Math.max(1, state.cad.pages || 1);
+  const on = !!state.cad.on && state.cad.kind === 'cdr' && total > 1;
+  bar.style.display = on ? 'inline-flex' : 'none';
+  if (!on) return;
+  const cur = Math.min(total - 1, Math.max(0, state.cad.page || 0));
+  $('#pageNow').textContent = String(cur + 1);
+  $('#pageTotal').textContent = String(total);
+  $('#pagePrev').disabled = cur <= 0;
+  $('#pageNext').disabled = cur >= total - 1;
+}
+
+function gotoPage(delta) {
+  const total = Math.max(1, state.cad.pages || 1);
+  const cur = state.cad.page || 0;
+  const next = Math.min(total - 1, Math.max(0, cur + delta));
+  if (next === cur || !state.meta || !state.meta.path) return;
+  setOp(`正在载入第 ${next + 1} / ${total} 页…`);
+  requestVector(state.meta.path, next);
+}
+
 // ---- 图纸坐标 ----
 // SVG 的 viewBox 就是图纸坐标范围；把它和「图像像素」对上，就能在两者之间来回换算。
 function cadUnitAt(cx, cy) {
@@ -627,18 +693,20 @@ function cadScreenAt(x, y) {
   return { x: img.left + px * state.view.z, y: img.top + py * state.view.z };
 }
 
-function fmtUnit(v) {
+// withUnit：CDR 的图纸坐标是毫米（页面尺寸），读数带上单位才有意义；
+// DWG 的图形单位因图而异，照旧只给数字。
+function fmtUnit(v, withUnit) {
   const a = Math.abs(v);
-  if (a >= 1000) return v.toFixed(1);
-  if (a >= 1) return v.toFixed(2);
-  return v.toFixed(3);
+  const s = a >= 1000 ? v.toFixed(1) : a >= 1 ? v.toFixed(2) : v.toFixed(3);
+  return withUnit && state.cad.unit ? `${s} ${state.cad.unit}` : s;
 }
 
 function updateCoord(cx, cy) {
   const el = $('#coordPill');
   if (!state.cad.on) return;
   const u = cadUnitAt(cx, cy);
-  el.textContent = u ? `X ${fmtUnit(u.x)}  Y ${fmtUnit(u.y)}` : 'X — Y —';
+  const unit = state.cad.unit ? ` ${state.cad.unit}` : '';
+  el.textContent = u ? `X ${fmtUnit(u.x)}  Y ${fmtUnit(u.y)}${unit}` : 'X — Y —';
 }
 
 // ---- 测量 ----
@@ -673,7 +741,7 @@ function drawMeasure() {
     const dx = ms.b.x - ms.a.x, dy = ms.b.y - ms.a.y;
     const d = Math.hypot(dx, dy);
     const ang = Math.atan2(dy, dx) * 180 / Math.PI;
-    tip.innerHTML = `距离 <b>${fmtUnit(d)}</b> · ΔX ${fmtUnit(Math.abs(dx))} ΔY ${fmtUnit(Math.abs(dy))} · ${ang.toFixed(1)}°`;
+    tip.innerHTML = `距离 <b>${fmtUnit(d, 1)}</b> · ΔX ${fmtUnit(Math.abs(dx))} ΔY ${fmtUnit(Math.abs(dy))} · ${ang.toFixed(1)}°`;
     tip.style.left = ((a.x + b.x) / 2) + 'px';
     tip.style.top = Math.min(a.y, b.y) + 'px';
     tip.classList.add('on');
@@ -703,7 +771,7 @@ function measureClick(cx, cy) {
   } else {
     state.cad.measure = { a: cur.a, b: u };
     const d = Math.hypot(u.x - cur.a.x, u.y - cur.a.y);
-    setOp(`测量结果：${fmtUnit(d)}（Esc 清除）`);
+    setOp(`测量结果：${fmtUnit(d, 1)}（Esc 清除）`);
   }
   drawMeasure();
 }
@@ -1140,16 +1208,20 @@ function renderInfo(info) {
     return;
   }
   const src = m.previewSource || '嵌入图';
+  const pExt = extname(m.path);
+  const isCdr = CDR_EXT.has(pExt);
   const kindText = m.kind === 'preview'
     ? (/解码/.test(src) ? `本地解码（${m.format || ''}）` : `内嵌预览（${src}）`)
-    : m.kind === 'vector' ? (isCadPath(m.path) ? '矢量解析（DWG/DXF）' : '矢量渲染')
+    : m.kind === 'vector' ? (isCadPath(m.path) ? '矢量解析（DWG/DXF）' : isCdr ? '矢量渲染（CDR）' : '矢量渲染')
       : m.ok === false ? (m.reason === 'needs-plugin' ? '需要解码插件' : '暂不支持')
         : '原生解码';
   // 图纸用「图纸单位」标尺寸：SVG 的内在像素（2048px 之类）对用户没有意义
   const box = m.cadBox;
   const isCad = isCadPath(m.path);
-  const dimText = isCad && box
-    ? `${fmtUnit(box.maxX - box.minX)} × ${fmtUnit(box.maxY - box.minY)} 单位`
+  const usePage = (isCad || isCdr) && box;
+  const pageUnit = m.cadUnit === 'mm' ? ' mm' : ' 单位';
+  const dimText = usePage
+    ? `${fmtUnit(box.maxX - box.minX)} × ${fmtUnit(box.maxY - box.minY)}${pageUnit}`
     : (m.width && m.height ? `${m.width} × ${m.height}` : '—');
   const rows = [
     ['文件名', m.name, 'wrap'],
@@ -1162,6 +1234,10 @@ function renderInfo(info) {
   ];
   if (isCad && m.cadLayers != null) {
     rows.splice(3, 0, ['图层', String(m.cadLayers)], ['图元', String(m.cadEntities || 0)]);
+  }
+  // 多页 CDR（名片正反面、画册）把页数摆出来，否则用户不知道还能往后翻
+  if (isCdr && m.cadPages > 1) {
+    rows.splice(3, 0, ['页数', `${m.cadPages} 页${state.cad.page ? `（第 ${state.cad.page + 1} 页）` : ''}`]);
   }
   if (m.kind === 'preview' && m.previewSize) {
     rows.splice(4, 0, ['解码后体积', fmtSize(m.previewSize)]);
@@ -1198,8 +1274,9 @@ function updateStatus() {
   }
   const pos = `${state.index + 1} / ${state.files.length}`;
   const box = m.cadBox;
+  const unitTxt = m.cadUnit ? ' ' + m.cadUnit : '';
   const dim = box
-    ? `${fmtUnit(box.maxX - box.minX)}×${fmtUnit(box.maxY - box.minY)}`
+    ? `${fmtUnit(box.maxX - box.minX)}×${fmtUnit(box.maxY - box.minY)}${unitTxt}`
     : (m.width && m.height ? m.width + '×' + m.height : '—');
   $('#sbFile').textContent = `${m.name}　·　${dim}　·　${fmtSize(m.size)}　·　${pos}`;
   $('#navCount').textContent = pos;
@@ -2137,6 +2214,10 @@ function bind() {
   $('#btnMeasure').addEventListener('click', toggleMeasure);
   $('#cadAllOn').addEventListener('click', () => allLayers(true));
   $('#cadAllOff').addEventListener('click', () => allLayers(false));
+
+  // CDR/CMX 多页翻页
+  $('#pagePrev').addEventListener('click', () => gotoPage(-1));
+  $('#pageNext').addEventListener('click', () => gotoPage(1));
 
   // 调整
   ['#adjBright', '#adjContrast', '#adjSat'].forEach((id) =>
