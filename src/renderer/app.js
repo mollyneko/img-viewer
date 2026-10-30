@@ -6,6 +6,8 @@
 const R = window.rat;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+// 多语言翻译函数（i18n.js 提供；英文 key 即默认文案）。带容错：i18n 未就绪时原样返回。
+const t = (k, p) => (window.RAT_I18N ? window.RAT_I18N.t(k, p) : k);
 
 // 未捕获错误留痕：主进程会把它们写进 userData/logs/rat.log，
 // 自检脚本也能通过 window.__ratErrors 读到。（CSP 禁止内联脚本，所以放这里）
@@ -77,7 +79,7 @@ const state = {
   outDir: null,
   batch: [],
   running: false,
-  lastOp: '就绪',
+  lastOp: t('Ready'),
   // CAD（DWG/DXF）专属状态：内联 SVG、图层、图纸坐标范围、测量/框选
   cad: {
     on: false,
@@ -201,7 +203,7 @@ async function openPaths(paths) {
   renderGrid();
   if (state.index >= 0) await select(state.index);
   else {
-    toast('这个文件夹里没有支持的图片', true);
+    toast(t('This folder has no supported images'), true);
     renderEmpty();
   }
 }
@@ -226,7 +228,7 @@ function renderTabs() {
     const x = document.createElement('span');
     x.className = 'x';
     x.textContent = '✕';
-    x.title = '关闭标签';
+    x.title = t('Close tab');
     x.addEventListener('click', (e) => {
       e.stopPropagation();
       state.tabs = state.tabs.filter((t) => !samePath(t, p));
@@ -255,12 +257,12 @@ async function select(i) {
     state.index = i;
     state.meta = null;
     setCadMode(false);
-    const msg = info && info.message ? info.message : '无法打开这个文件';
+    const msg = info && info.message ? info.message : t('Cannot open this file');
     // 别让画布退回「把图片拖进来」——那看起来像什么都没打开。
     // 明确写清楚是「这个文件打不开」，并把原因带上。
-    renderEmpty('这张图打不开', msg);
+    renderEmpty(t('This image cannot be opened'), msg);
     toast(msg, true);
-    setOp('打开失败：' + msg);
+    setOp(t('Open failed: {msg}', { msg }));
     renderTabs();
     renderInfo(info);
     return;
@@ -292,29 +294,29 @@ async function select(i) {
     // 矢量图透明底，直接落在画布底色上；线条颜色由主进程按主题自适应生成
     img.removeAttribute('src');
     $('#emptyHint').style.display = '';
-    setEmptyHint('矢量渲染中…', '正在把矢量内容转成 SVG');
+    setEmptyHint(t('Vector rendering…'), t('Converting vector content to SVG'));
     img.onload = () => {
       const ms = Math.round(performance.now() - t0);
       fit();
-      $('#perfPill').innerHTML = `矢量 <b>${ms} ms</b>`;
+      $('#perfPill').innerHTML = `${t('Vector')} <b>${ms} ms</b>`;
       buildHistogram(f.path);
     };
     img.onerror = () => {
-      setEmptyHint('矢量渲染失败', 'SVG 加载失败，请重试');
+      setEmptyHint(t('Vector render failed'), t('SVG load failed, please retry'));
     };
     requestVector(f.path);
   } else {
     img.onload = () => {
       const ms = Math.round(performance.now() - t0);
       fit();
-      const how = info.kind !== 'preview' ? '原生解码'
-        : (/解码/.test(info.previewSource || '') ? '本地解码' : '内嵌预览');
-      $('#perfPill').innerHTML = `载入 <b>${ms} ms</b> · ${how}`;
+      const how = info.kind !== 'preview' ? t('Native decode')
+        : (/解码/.test(info.previewSource || '') ? t('Local decode') : t('Embedded preview'));
+      $('#perfPill').innerHTML = `${t('Loaded')} <b>${ms} ms</b> · ${how}`;
       buildHistogram(f.path);
     };
     img.onerror = () => {
       renderEmpty();
-      toast('这张图渲染失败了', true);
+      toast(t('This image failed to render'), true);
     };
     img.src = R.imageUrl(f.path);
     // 预览只是占位：CDR/CMX 的矢量还在后台转，转好就热替换成矢量
@@ -332,7 +334,7 @@ async function select(i) {
   prefetchNeighbors(state.index);
   $('#previewPill').style.display = info.kind === 'preview' ? '' : 'none';
   if (info.kind === 'preview') {
-    $('#previewPill').textContent = '内嵌预览 · ' + (info.previewSource || '');
+    $('#previewPill').textContent = t('Embedded preview · {src}', { src: info.previewSource || '' });
   }
 }
 
@@ -354,11 +356,11 @@ async function requestVector(p, page) {
   if (!r || !r.ok) {
     // 「vector」类文件没有预览可退 —— 明确告诉用户失败原因
     if (state.meta && samePath(state.meta.path, p) && state.meta.kind === 'vector') {
-      setEmptyHint('矢量渲染失败', r && r.reason ? r.reason : '未知原因');
-      toast('这个文件转不出矢量：' + (r && r.reason || '未知原因'), true);
+      setEmptyHint(t('Vector render failed'), r && r.reason ? r.reason : t('Unknown reason'));
+      toast(t('This file cannot be vectorized: {reason}', { reason: (r && r.reason || t('Unknown reason')) }), true);
     } else if (state.meta && samePath(state.meta.path, p)) {
       // CDR 还能看内嵌预览，提示一句就够，别把画面清掉
-      setOp('矢量解析不可用，仍显示内嵌预览');
+      setOp(t('Vector parsing unavailable, still showing embedded preview'));
     }
     return;
   }
@@ -467,11 +469,11 @@ async function showCadVector(p, r) {
       // 显示矢量渲染中」，看起来像卡死。
       $('#emptyHint').style.display = 'none';
       fit();
-      $('#perfPill').innerHTML = `矢量 <b>${ms} ms</b> · ${Math.round(r.width)}×${Math.round(r.height)}`;
+      $('#perfPill').innerHTML = `${t('Vector')} <b>${ms} ms</b> · ${Math.round(r.width)}×${Math.round(r.height)}`;
       buildHistogram(p);
     };
     img.onerror = () => {
-      setEmptyHint('矢量渲染失败', 'SVG 加载失败，请重试');
+      setEmptyHint(t('Vector render failed'), t('SVG load failed, please retry'));
     };
     img.src = r.url;
     stage.classList.remove('on');
@@ -539,13 +541,13 @@ async function showCadVector(p, r) {
     ? `${fmtUnit(bw)} × ${fmtUnit(bh)} ${state.cad.unit}`
     : `${meta.width}×${meta.height}`;
   $('#perfPill').innerHTML = state.cad.layers.length
-    ? `矢量 <b>${ms} ms</b> · ${dim} · ${state.cad.layers.length} 层`
-    : `矢量 <b>${ms} ms</b> · ${dim}`;
+    ? `矢量 <b>${ms} ms</b> · ${dim} · ${t('{n} layers', { n: state.cad.layers.length })}`
+    : `${t('Vector')} <b>${ms} ms</b> · ${dim}`;
   const tag = state.cad.kind === 'cdr' ? 'CDR' : (r.format || 'DWG');
-  $('#previewPill').textContent = `矢量 · ${tag}`;
+  $('#previewPill').textContent = t('Vector') + ' · ' + tag;
   $('#previewPill').style.display = '';
   $('#fmtPill').textContent = tag;
-  if (state.cad.pages > 1) setOp(`第 ${state.cad.page + 1} / ${state.cad.pages} 页`);
+  if (state.cad.pages > 1) setOp(t('Page {cur} / {total}', { cur: state.cad.page + 1, total: state.cad.pages }));
   renderInfo(meta);
   updateStatus();
   buildHistogram(p);
@@ -580,7 +582,7 @@ function setLayerVisible(i, on) {
   if (row) {
     row.classList.toggle('off', !on);
     const eye = row.querySelector('.cad-eye');
-    if (eye) eye.title = on ? '隐藏此图层' : '显示此图层';
+    if (eye) eye.title = on ? t('Hide this layer') : t('Show this layer');
   }
   if (state.cad.measure) drawMeasure();
 }
@@ -588,19 +590,19 @@ function setLayerVisible(i, on) {
 function toggleLayer(i) {
   if (state.cad.degraded) return;
   setLayerVisible(i, !layerOn(i));
-  setOp(`图层「${state.cad.layers[i].name}」已${layerOn(i) ? '显示' : '隐藏'}`);
+  setOp(layerOn(i) ? t('Layer "{name}" shown', { name: state.cad.layers[i].name }) : t('Layer "{name}" hidden', { name: state.cad.layers[i].name }));
 }
 
 function soloLayer(i) {
   if (state.cad.degraded) return;
   for (let k = 0; k < state.cad.layers.length; k++) setLayerVisible(k, k === i);
-  setOp(`只显示图层「${state.cad.layers[i].name}」`);
+  setOp(t('Solo layer "{name}"', { name: state.cad.layers[i].name }));
 }
 
 function allLayers(on) {
   if (state.cad.degraded) return;
   for (let k = 0; k < state.cad.layers.length; k++) setLayerVisible(k, on);
-  setOp(on ? '已显示全部图层' : '已隐藏全部图层');
+  setOp(on ? t('Show all layers') : t('Hide all layers'));
 }
 
 function renderCadLayers() {
@@ -610,7 +612,7 @@ function renderCadLayers() {
   // CDR/CMX 的 SVG 是扁平的（librevenge 不带图层），整块卡片由 .cad-flat 收起
   if (state.cad.kind !== 'cad') return;
   if (state.cad.degraded) {
-    box.innerHTML = '<div class="hint">图纸过大，已关闭图层交互（仍可正常缩放查看）</div>';
+    box.innerHTML = '<div class="hint">' + t('Drawing too large, layer interaction disabled (zoom/pan still works)') + '</div>';
     return;
   }
   for (let i = 0; i < list.length; i++) {
@@ -631,7 +633,7 @@ function renderCadLayers() {
     ct.textContent = L.count ? String(L.count) : '';
     const eye = document.createElement('button');
     eye.className = 'cad-eye';
-    eye.title = on ? '隐藏此图层' : '显示此图层';
+    eye.title = on ? t('Hide this layer') : t('Show this layer');
     eye.innerHTML = '<svg class="ic"><use href="#i-eye"/></svg>';
     eye.addEventListener('click', (e) => { e.stopPropagation(); toggleLayer(i); });
     row.addEventListener('dblclick', () => soloLayer(i));
@@ -662,7 +664,7 @@ function gotoPage(delta) {
   const cur = state.cad.page || 0;
   const next = Math.min(total - 1, Math.max(0, cur + delta));
   if (next === cur || !state.meta || !state.meta.path) return;
-  setOp(`正在载入第 ${next + 1} / ${total} 页…`);
+  setOp(t('Loading page {cur} / {total}…', { cur: next + 1, total }));
   requestVector(state.meta.path, next);
 }
 
@@ -741,7 +743,9 @@ function drawMeasure() {
     const dx = ms.b.x - ms.a.x, dy = ms.b.y - ms.a.y;
     const d = Math.hypot(dx, dy);
     const ang = Math.atan2(dy, dx) * 180 / Math.PI;
-    tip.innerHTML = `距离 <b>${fmtUnit(d, 1)}</b> · ΔX ${fmtUnit(Math.abs(dx))} ΔY ${fmtUnit(Math.abs(dy))} · ${ang.toFixed(1)}°`;
+    tip.innerHTML = t('Distance {d} · ΔX {dx} ΔY {dy} · {ang}°', {
+      d: `<b>${fmtUnit(d, 1)}</b>`, dx: fmtUnit(Math.abs(dx)), dy: fmtUnit(Math.abs(dy)), ang: ang.toFixed(1),
+    });
     tip.style.left = ((a.x + b.x) / 2) + 'px';
     tip.style.top = Math.min(a.y, b.y) + 'px';
     tip.classList.add('on');
@@ -759,7 +763,7 @@ function toggleMeasure() {
   $('#btnMeasure').classList.toggle('on', next === 'measure');
   $('#viewport').classList.toggle('cad-cross', !!next);
   drawMeasure();
-  setOp(next ? '测量：点两个点量距离（Esc 退出）' : '已退出测量');
+  setOp(next ? t('Measure: click two points to measure, Esc to exit') : t('Measure exited'));
 }
 
 function measureClick(cx, cy) {
@@ -771,7 +775,7 @@ function measureClick(cx, cy) {
   } else {
     state.cad.measure = { a: cur.a, b: u };
     const d = Math.hypot(u.x - cur.a.x, u.y - cur.a.y);
-    setOp(`测量结果：${fmtUnit(d, 1)}（Esc 清除）`);
+    setOp(t('Measure result: {d} (Esc to clear)', { d: fmtUnit(d, 1) }));
   }
   drawMeasure();
 }
@@ -793,7 +797,7 @@ function toggleWinZoom() {
   $('#btnCadWin').classList.toggle('on', next === 'win');
   $('#viewport').classList.toggle('cad-cross', !!next);
   $('#cadRubber').classList.remove('on');
-  setOp(next ? '窗口放大：拖一个框（Esc 退出）' : '已退出窗口放大');
+  setOp(next ? t('Window zoom: drag a box, Esc to exit') : t('Window zoom exited'));
 }
 
 function winZoomStart(cx, cy) {
@@ -840,7 +844,7 @@ function winZoomEnd() {
   state.view.tx = -((ix + iw / 2) - m.width / 2) * nz;
   state.view.ty = -((iy + ih / 2) - m.height / 2) * nz;
   updateStage();
-  setOp('已放大选区');
+  setOp(t('Zoomed to selection'));
 }
 
 /* ============================================================ CAD 看图结束 */
@@ -875,14 +879,14 @@ function prefetchNeighbors(i) {
   }, 180);
 }
 
-const EMPTY_HINT_TITLE = '把图片或文件夹拖进来';
-const EMPTY_HINT_SUB = '或点左上角「打开」/「文件夹」　支持 JPG · PNG · WebP · GIF · BMP · AVIF · SVG · TIFF · PSD · CDR · DWG · RAW';
+const EMPTY_HINT_TITLE = 'Drag images or a folder here';
+const EMPTY_HINT_SUB = 'Or click “Open” / “Folder” at top-left　Supported: JPG · PNG · WebP · GIF · BMP · AVIF · SVG · TIFF · PSD · CDR · DWG · RAW';
 
 function setEmptyHint(title, sub) {
   const t = $('#emptyHint .eh-t');
   const s = $('#emptyHint .eh-s');
-  if (t) t.textContent = title || EMPTY_HINT_TITLE;
-  if (s) s.textContent = sub || EMPTY_HINT_SUB;
+  if (t) t.textContent = title != null ? title : t(EMPTY_HINT_TITLE);
+  if (s) s.textContent = sub != null ? sub : t(EMPTY_HINT_SUB);
 }
 
 function renderEmpty(hintTitle, hintSub) {
@@ -1000,7 +1004,7 @@ function resetAdjust() {
   state.adj = { b: 0, c: 0, s: 0 };
   syncAdjustUI();
   updateStage();
-  setOp('已重置调整');
+  setOp(t('Reset adjust'));
 }
 
 async function getDrawable(p) {
@@ -1117,7 +1121,7 @@ async function buildHistogram(p) {
   const failed = () => {
     ctx.fillStyle = dark ? '#6c7787' : '#8b93a3';
     ctx.font = '11px sans-serif';
-    ctx.fillText('无法读取像素', 10, H / 2 + 4);
+    ctx.fillText(t('Cannot read pixels'), 10, H / 2 + 4);
   };
 
   // 同一张图反复翻回时直接复用已算好的直方图，省一次采样
@@ -1181,7 +1185,7 @@ async function buildHistogram(p) {
 function autoEnhance() {
   const st = state.histStats;
   if (!st) {
-    toast('还没打开图片');
+    toast(t('No image opened yet'));
     return;
   }
   const b = clamp(Math.round((132 - st.mean) * 0.40), -40, 40);
@@ -1189,7 +1193,7 @@ function autoEnhance() {
   state.adj = { b, c, s: 14 };
   syncAdjustUI();
   updateStage();
-  setOp(`一键美化：亮度 ${b >= 0 ? '+' : ''}${b}，对比度 ${c >= 0 ? '+' : ''}${c}，饱和度 +14`);
+  setOp(t('Auto enhance: brightness {b}, contrast {c}, saturation +14', { b: (b >= 0 ? '+' : '') + b, c: (c >= 0 ? '+' : '') + c }));
 }
 
 // ------------------------------------------------------------------ 信息面板
@@ -1204,43 +1208,43 @@ function kv(rows) {
 function renderInfo(info) {
   const m = state.meta || info;
   if (!m || !m.path) {
-    $('#kvInfo').innerHTML = '<div class="empty">未打开图片</div>';
+    $('#kvInfo').innerHTML = '<div class="empty">' + t('No image open') + '</div>';
     return;
   }
-  const src = m.previewSource || '嵌入图';
+  const src = m.previewSource || t('Embedded image');
   const pExt = extname(m.path);
   const isCdr = CDR_EXT.has(pExt);
   const kindText = m.kind === 'preview'
-    ? (/解码/.test(src) ? `本地解码（${m.format || ''}）` : `内嵌预览（${src}）`)
-    : m.kind === 'vector' ? (isCadPath(m.path) ? '矢量解析（DWG/DXF）' : isCdr ? '矢量渲染（CDR）' : '矢量渲染')
-      : m.ok === false ? (m.reason === 'needs-plugin' ? '需要解码插件' : '暂不支持')
-        : '原生解码';
+    ? (/解码/.test(src) ? t('Local decode ({fmt})', { fmt: m.format || '' }) : t('Embedded preview ({src})', { src }))
+    : m.kind === 'vector' ? (isCadPath(m.path) ? t('Vector parse (DWG/DXF)') : isCdr ? t('Vector render (CDR)') : t('Vector render'))
+      : m.ok === false ? (m.reason === 'needs-plugin' ? t('Needs decode plugin') : t('Not supported yet'))
+        : t('Native decode');
   // 图纸用「图纸单位」标尺寸：SVG 的内在像素（2048px 之类）对用户没有意义
   const box = m.cadBox;
   const isCad = isCadPath(m.path);
   const usePage = (isCad || isCdr) && box;
-  const pageUnit = m.cadUnit === 'mm' ? ' mm' : ' 单位';
+  const pageUnit = m.cadUnit === 'mm' ? t(' mm') : t(' units');
   const dimText = usePage
     ? `${fmtUnit(box.maxX - box.minX)} × ${fmtUnit(box.maxY - box.minY)}${pageUnit}`
     : (m.width && m.height ? `${m.width} × ${m.height}` : '—');
   const rows = [
-    ['文件名', m.name, 'wrap'],
-    ['格式', (m.format || '') + (m.kind === 'preview' ? ' · 预览' : '')],
-    ['尺寸', dimText],
-    ['体积', fmtSize(m.size)],
-    ['修改时间', fmtTime(m.mtime)],
-    ['读取方式', kindText, 'wrap'],
-    ['所在目录', m.dir, 'wrap mono'],
+    [t('File name'), m.name, 'wrap'],
+    [t('Format'), (m.format || '') + (m.kind === 'preview' ? ' · ' + t('Preview') : '')],
+    [t('Dimensions'), dimText],
+    [t('Size'), fmtSize(m.size)],
+    [t('Modified'), fmtTime(m.mtime)],
+    [t('Decode method'), kindText, 'wrap'],
+    [t('Location'), m.dir, 'wrap mono'],
   ];
   if (isCad && m.cadLayers != null) {
-    rows.splice(3, 0, ['图层', String(m.cadLayers)], ['图元', String(m.cadEntities || 0)]);
+    rows.splice(3, 0, [t('Layers'), String(m.cadLayers)], [t('Entities'), String(m.cadEntities || 0)]);
   }
   // 多页 CDR（名片正反面、画册）把页数摆出来，否则用户不知道还能往后翻
   if (isCdr && m.cadPages > 1) {
-    rows.splice(3, 0, ['页数', `${m.cadPages} 页${state.cad.page ? `（第 ${state.cad.page + 1} 页）` : ''}`]);
+    rows.splice(3, 0, [t('Pages'), `${m.cadPages}${t(' pages')}${state.cad.page ? t(' (page {n})', { n: state.cad.page + 1 }) : ''}`]);
   }
   if (m.kind === 'preview' && m.previewSize) {
-    rows.splice(4, 0, ['解码后体积', fmtSize(m.previewSize)]);
+    rows.splice(4, 0, [t('Decoded size'), fmtSize(m.previewSize)]);
   }
   $('#kvInfo').innerHTML = kv(rows);
 }
@@ -1248,20 +1252,20 @@ function renderInfo(info) {
 async function renderExif(p, exif) {
   const e = exif || (await R.readExif(p));
   if (!e) {
-    $('#kvExif').innerHTML = '<div class="empty">这个文件没有可读的 EXIF</div>';
+    $('#kvExif').innerHTML = '<div class="empty">' + t('This file has no readable EXIF') + '</div>';
     return;
   }
   const cam = [e.make, e.model].filter(Boolean).join(' ');
   const rows = [
-    ['相机', cam],
-    ['镜头', e.lens, 'wrap'],
-    ['快门', e.exposure],
-    ['光圈', e.aperture],
+    [t('Camera'), cam],
+    [t('Lens'), e.lens, 'wrap'],
+    [t('Shutter'), e.exposure],
+    [t('Aperture'), e.aperture],
     ['ISO', e.iso],
-    ['焦距', e.focal],
-    ['拍摄时间', e.dateTime],
-    ['方向', e.orientationText],
-    ['软件', e.software, 'wrap'],
+    [t('Focal length'), e.focal],
+    [t('Capture time'), e.dateTime],
+    [t('Orientation'), e.orientationText],
+    [t('Software'), e.software, 'wrap'],
   ];
   $('#kvExif').innerHTML = kv(rows);
 }
@@ -1269,7 +1273,7 @@ async function renderExif(p, exif) {
 function updateStatus() {
   const m = state.meta;
   if (!m) {
-    $('#sbFile').textContent = '未打开文件';
+    $('#sbFile').textContent = t('No file opened');
     return;
   }
   const pos = `${state.index + 1} / ${state.files.length}`;
@@ -1351,7 +1355,7 @@ function renderFilm() {
         const tag = document.createElement('span');
         tag.className = 'tag ' + b;
         tag.textContent = b === 'cdr' ? (CAD_EXT.has(f.ext) ? f.ext.slice(1).toUpperCase() : 'CDR')
-          : (NATIVE_EXT.has(f.ext) ? '' : '预览');
+          : (NATIVE_EXT.has(f.ext) ? '' : t('Preview'));
         if (tag.textContent) el.appendChild(tag);
       }
       el.addEventListener('click', () => select(i));
@@ -1395,10 +1399,10 @@ function renderGrid() {
     g.innerHTML = '';
     const d = document.createElement('div');
     d.className = 'grid-empty';
-    d.textContent = '还没载入文件夹 —— 点上方「打开文件夹」，或直接把文件夹拖进窗口';
+    d.textContent = t('No folder loaded — click “Open folder” above, or drag a folder into the window');
     g.appendChild(d);
-    $('#mgCount').textContent = '0 项';
-    gridCache = { files: null, q, tw, count: '0 项' };
+    $('#mgCount').textContent = '0' + t(' items');
+    gridCache = { files: null, q, tw, count: '0' + t(' items') };
     return;
   }
 
@@ -1429,7 +1433,7 @@ function renderGrid() {
         const bd = document.createElement('span');
         bd.className = 'badge ' + b;
         bd.textContent = b === 'cdr' ? (CAD_EXT.has(f.ext) ? f.ext.slice(1).toUpperCase() : 'CDR')
-          : (NATIVE_EXT.has(f.ext) ? f.ext.slice(1).toUpperCase() : '预览');
+          : (NATIVE_EXT.has(f.ext) ? f.ext.slice(1).toUpperCase() : t('Preview'));
         pv.appendChild(bd);
       }
       const meta = document.createElement('div');
@@ -1445,7 +1449,7 @@ function renderGrid() {
     });
     g.innerHTML = '';
     g.appendChild(frag);
-    gridCache = { files: state.files, q, tw, count: (q ? shown + ' / ' : '') + state.files.length + ' 项' };
+    gridCache = { files: state.files, q, tw, count: (q ? shown + t(' / ') : '') + state.files.length + t(' items') };
   } else {
     for (const el of g.children) {
       el.classList.toggle('on', +el.dataset.i === state.index);
@@ -1462,7 +1466,7 @@ async function renderRecent() {
   try { recent = await R.recentFolders(); } catch { recent = []; }
   if (!recent.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
   box.style.display = '';
-  box.innerHTML = '<span class="lbl">最近：</span>';
+  box.innerHTML = '<span class="lbl">' + t('Recent: ') + '</span>';
   recent.forEach((f) => {
     const chip = document.createElement('button');
     chip.className = 'recent-chip';
@@ -1526,7 +1530,7 @@ function renderBatchRows() {
   if (!state.batch.length) {
     const d = document.createElement('div');
     d.className = 'grid-empty';
-    d.textContent = '还没载入文件 —— 先打开一个文件夹，或点下方「从当前文件夹载入」';
+    d.textContent = t('No files loaded — open a folder first, or click “Load from current folder” below');
     box.appendChild(d);
     $('#bSummary').textContent = '—';
     return;
@@ -1541,12 +1545,12 @@ function renderBatchRows() {
       <span class="o"></span>`;
     row.querySelector('.f').textContent = f.name;
     row.querySelector('.f').title = f.path;
-    row.querySelector('.st').textContent = '等待';
+    row.querySelector('.st').textContent = t('Waiting');
     box.appendChild(row);
   });
   const total = state.batch.length;
   const bytes = state.batch.reduce((s, f) => s + (f.size || 0), 0);
-  $('#bSummary').textContent = `共 ${total} 个文件 · ${fmtSize(bytes)}`;
+  $('#bSummary').textContent = t('Total {n} files · {size}', { n: total, size: fmtSize(bytes) });
 }
 
 function setRow(i, pct, stateText, out, cls) {
@@ -1568,7 +1572,7 @@ function setRow(i, pct, stateText, out, cls) {
 async function runBatch() {
   if (state.running) return;
   if (!state.batch.length) {
-    toast('批量列表是空的', true);
+    toast(t('Batch list is empty'), true);
     return;
   }
   if (!state.outDir) {
@@ -1598,11 +1602,11 @@ async function runBatch() {
   const worker = async (start) => {
     for (let k = start; k < jobs.length; k += CONC) {
       const { f, i } = jobs[k];
-      setRow(i, 8, '读取…', '', 'run');
+      setRow(i, 8, t('Reading…'), '', 'run');
       try {
         const d = await getDrawable(f.path);
-        if (!d) throw new Error('无法读取像素（可能是需要解码插件的格式）');
-        setRow(i, 34, '转码…', '');
+        if (!d) throw new Error(t('Cannot read pixels'));
+        setRow(i, 34, t('Encoding…'), '');
 
         let w = d.w;
         let h = d.h;
@@ -1622,9 +1626,9 @@ async function runBatch() {
         ctx.drawImage(d.img, 0, 0, w, h);
 
         const blob = await new Promise((res) => c.toBlob(res, type, quality));
-        if (!blob) throw new Error('编码失败');
+        if (!blob) throw new Error(t('Encode failed'));
         const buf = await blob.arrayBuffer();
-        setRow(i, 76, '写入…', '');
+        setRow(i, 76, t('Writing…'), '');
 
         // 输出名去重：a.PSD 与 a.png 同名都转 jpg 会互相覆盖，碰撞时加序号
         const stem = basename(f.path).replace(/\.[^.]+$/, '');
@@ -1637,12 +1641,12 @@ async function runBatch() {
         usedNames.add(name);
         const target = state.outDir + '\\' + name;
         const wr = await R.writeFile(target, buf);
-        if (!wr.ok) throw new Error(wr.error || '写入失败');
+        if (!wr.ok) throw new Error(wr.error || t('Write failed'));
         okCount++;
-        setRow(i, 100, '完成', fmtSize(wr.bytes), 'done');
+        setRow(i, 100, t('Done'), fmtSize(wr.bytes), 'done');
       } catch (e) {
         errCount++;
-        setRow(i, 100, '失败', String(e.message || e), 'err');
+        setRow(i, 100, t('Failed'), String(e.message || e), 'err');
       }
     }
   };
@@ -1653,9 +1657,9 @@ async function runBatch() {
 
   state.running = false;
   $('#bRun').disabled = false;
-  const tail = skipped ? `，跳过 ${skipped} 个矢量文件` : '';
-  setOp(`批量转换完成：成功 ${okCount}，失败 ${errCount}${tail}　→　${state.outDir}`);
-  toast(`批处理完成：成功 ${okCount} 个${errCount ? '，失败 ' + errCount + ' 个' : ''}`, errCount > 0);
+  const tail = skipped ? t('Skipped {n} vector files', { n: skipped }) : '';
+  setOp(t('Batch conversion complete: {ok} succeeded, {err} failed{extra} → {dir}', { ok: okCount, err: errCount, extra: tail, dir: state.outDir }));
+  toast(t('Batch done: {ok} succeeded{extra}', { ok: okCount, extra: errCount ? t(', {n} failed', { n: errCount }) : '' }), errCount > 0);
 }
 
 // ------------------------------------------------------------------ 裁剪
@@ -1664,12 +1668,12 @@ async function runBatch() {
 function enterCrop() {
   const m = state.meta;
   if (!m) {
-    toast('先打开一张图', true);
+    toast(t('Open an image first'), true);
     return;
   }
   // 矢量文件在 SVG 就绪前宽高是 0（CDR 无内嵌预览 / DWG / DXF），裁剪框会退化成 0×0
   if (!m.width || !m.height) {
-    toast('矢量内容还在渲染中，等画面出来再裁剪', true);
+    toast(t('Vector content still rendering, crop after it appears'), true);
     return;
   }
   if (state.view.rot % 360 !== 0 || state.view.sx !== 1 || state.view.sy !== 1) {
@@ -1677,7 +1681,7 @@ function enterCrop() {
     state.view.sx = 1;
     state.view.sy = 1;
     fit();
-    toast('已重置旋转/翻转，便于按原图坐标裁剪');
+    toast(t('Rotation/flip reset for cropping by original coordinates'));
   }
   state.crop.on = true;
   state.crop.rect = { x: m.width * 0.18, y: m.height * 0.18, w: m.width * 0.64, h: m.height * 0.64 };
@@ -1685,7 +1689,7 @@ function enterCrop() {
   $('#ratioRow').classList.remove('off');
   $('#btnCrop').classList.add('on');
   drawCrop();
-  setOp('裁剪模式：拖动框体或四角，回车应用，Esc 取消');
+  setOp(t('Crop mode: drag box or corners, Enter to apply, Esc to cancel'));
 }
 
 function exitCrop(silent) {
@@ -1695,7 +1699,7 @@ function exitCrop(silent) {
   $('#cropBox').classList.remove('show');
   $('#ratioRow').classList.add('off');
   $('#btnCrop').classList.remove('on');
-  if (!silent) setOp('已退出裁剪');
+  if (!silent) setOp(t('Crop exited'));
 }
 
 function imageRect() {
@@ -1721,7 +1725,7 @@ function drawCrop() {
   el.style.width = (r.w * z) + 'px';
   el.style.height = (r.h * z) + 'px';
   const pct = Math.round((r.w / m.width) * 100);
-  $('#cropSize').textContent = `${Math.round(r.w)} × ${Math.round(r.h)} px · 占原图 ${pct}%`;
+  $('#cropSize').textContent = t('{w} × {h} px · {pct}% of original', { w: Math.round(r.w), h: Math.round(r.h), pct });
 }
 
 function cropAspect(r) {
@@ -1771,12 +1775,12 @@ async function applyCrop() {
   const sw = clamp(Math.round(r.w), 1, m.width - sx);
   const sh = clamp(Math.round(r.h), 1, m.height - sy);
   if (sw < 4 || sh < 4) {
-    toast('裁剪区域太小了', true);
+    toast(t('Crop area too small'), true);
     return;
   }
   const d = await getDrawable(m.path);
   if (!d) {
-    toast('读不到像素，无法裁剪', true);
+    toast(t('Cannot read pixels, cannot crop'), true);
     return;
   }
   const c = document.createElement('canvas');
@@ -1785,7 +1789,7 @@ async function applyCrop() {
   c.getContext('2d').drawImage(d.img, sx, sy, sw, sh, 0, 0, sw, sh);
   const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
   if (!blob) {
-    toast('裁剪失败', true);
+    toast(t('Crop failed'), true);
     return;
   }
   const base = basename(m.path).replace(/\.[^.]+$/, '');
@@ -1796,11 +1800,11 @@ async function applyCrop() {
   if (!target) return;
   const wr = await R.writeFile(target, await blob.arrayBuffer());
   if (wr.ok) {
-    toast(`已裁剪为 ${sw}×${sh} 并保存`);
-    setOp('裁剪已保存：' + target);
+    toast(t('Cropped to {sw}×{sh} and saved', { sw, sh }));
+    setOp(t('Crop saved: {path}', { path: target }));
     exitCrop(true);
   } else {
-    toast('保存失败：' + (wr.error || ''), true);
+    toast(t('Save failed: {err}', { err: wr.error || '' }), true);
   }
 }
 
@@ -1820,7 +1824,7 @@ function toggleLens() {
   $('#btnLens').classList.toggle('on', state.lens);
   $('#stage').classList.toggle('lens-off', state.lens);
   $('#cadStage').classList.toggle('lens-off', state.lens);
-  setOp(state.lens ? '放大镜已开启（移动鼠标查看，L 关闭）' : '放大镜已关闭');
+  setOp(state.lens ? t('Magnifier on (move mouse to view, L to close)') : t('Magnifier off'));
 }
 
 let lensImgUrl = '';
@@ -1856,36 +1860,37 @@ function togglePlay() {
   clearInterval(state.timer);
   if (state.playing) {
     state.timer = setInterval(next, state.slideshowInterval || 2600);
-    setOp('幻灯片放映中（空格或 Esc 退出）');
+    setOp(t('Slideshow playing (Space or Esc to exit)'));
   } else {
-    setOp('已退出放映');
+    setOp(t('Slideshow exited'));
   }
 }
 
 // ------------------------------------------------------------------ 右键菜单
+// 第一个元素改为 i18n key（英文），由 showCtx 用 t() 翻译。
 const MENU = [
-  ['适应窗口', 'i-fit', 'F', () => fit()],
-  ['实际像素', 'i-one', 'Ctrl+1', () => oneToOne()],
-  ['放大', 'i-plus', '+', () => zoomAt(1.2)],
-  ['缩小', 'i-minus', '-', () => zoomAt(1 / 1.2)],
+  ['Fit window', 'i-fit', 'F', () => fit()],
+  ['Actual pixels', 'i-one', 'Ctrl+1', () => oneToOne()],
+  ['Zoom in', 'i-plus', '+', () => zoomAt(1.2)],
+  ['Zoom out', 'i-minus', '-', () => zoomAt(1 / 1.2)],
   ['sep'],
-  ['左转 90°', 'i-ccw', ',', () => rotate(-90)],
-  ['右转 90°', 'i-cw', '.', () => rotate(90)],
-  ['水平翻转', 'i-fliph', 'H', () => flip('h')],
-  ['垂直翻转', 'i-flipv', 'V', () => flip('v')],
+  ['Rotate left 90°', 'i-ccw', ',', () => rotate(-90)],
+  ['Rotate right 90°', 'i-cw', '.', () => rotate(90)],
+  ['Flip horizontal', 'i-fliph', 'H', () => flip('h')],
+  ['Flip vertical', 'i-flipv', 'V', () => flip('v')],
   ['sep'],
-  ['裁剪', 'i-crop', 'C', () => enterCrop()],
-  ['放大镜', 'i-lens', 'L', () => toggleLens()],
-  ['一键美化', 'i-wand', '', () => autoEnhance()],
-  ['重置调整', 'i-reset', '', () => resetAdjust()],
+  ['Crop', 'i-crop', 'C', () => enterCrop()],
+  ['Magnifier', 'i-lens', 'L', () => toggleLens()],
+  ['Auto enhance', 'i-wand', '', () => autoEnhance()],
+  ['Reset adjust', 'i-reset', '', () => resetAdjust()],
   ['sep'],
-  ['另存为…', 'i-save', 'Ctrl+S', () => saveAsCurrent()],
-  ['复制图片', 'i-copy', '', () => copyImage()],
-  ['复制文件路径', 'i-copy', '', () => copyPath()],
-  ['在资源管理器中显示', 'i-folder', '', () => revealCurrent()],
+  ['Save as…', 'i-save', 'Ctrl+S', () => saveAsCurrent()],
+  ['Copy image', 'i-copy', '', () => copyImage()],
+  ['Copy file path', 'i-copy', '', () => copyPath()],
+  ['Show in Explorer', 'i-folder', '', () => revealCurrent()],
   ['sep'],
-  ['幻灯片放映', 'i-slides', '空格', () => togglePlay()],
-  ['删除到回收站', 'i-trash', 'Del', () => trashCurrent(), 'danger'],
+  ['Slideshow', 'i-slides', 'Space', () => togglePlay()],
+  ['Delete to Recycle Bin', 'i-trash', 'Del', () => trashCurrent(), 'danger'],
 ];
 
 function showCtx(x, y) {
@@ -1898,14 +1903,14 @@ function showCtx(x, y) {
       el.appendChild(s);
       return;
     }
-    const [label, icon, key, fn, cls] = it;
+    const [mkey, icon, hot, fn, cls] = it;
     const d = document.createElement('div');
     d.className = 'ctx-item' + (cls ? ' ' + cls : '') + (state.meta ? '' : ' disabled');
-    d.innerHTML = `<svg class="ic"><use href="#${icon}"/></svg><span>${label}</span>`
-      + (key ? `<span class="k">${key}</span>` : '');
+    d.innerHTML = `<svg class="ic"><use href="#${icon}"/></svg><span>${t(mkey)}</span>`
+      + (hot ? `<span class="k">${hot}</span>` : '');
     d.addEventListener('click', () => {
       hideCtx();
-      if (state.meta || label === '幻灯片放映') fn();
+      if (state.meta || mkey === 'Slideshow') fn();
     });
     el.appendChild(d);
   });
@@ -1925,7 +1930,7 @@ async function saveAsCurrent() {
   if (!m) return;
   const d = await getDrawable(m.path);
   if (!d) {
-    toast('这个格式没有可导出的像素', true);
+    toast(t('This format has no exportable pixels'), true);
     return;
   }
   const c = document.createElement('canvas');
@@ -1942,17 +1947,17 @@ async function saveAsCurrent() {
   ]);
   if (!target) return;
   const wr = await R.writeFile(target, await blob.arrayBuffer());
-  toast(wr.ok ? '已另存为 ' + basename(target) : '保存失败', !wr.ok);
-  if (wr.ok) setOp('已另存：' + target);
+  toast(wr.ok ? t('Saved as {name}', { name: basename(target) }) : t('Save failed'), !wr.ok);
+  if (wr.ok) setOp(t('Saved as {name}', { name: target }));
 }
 
 async function copyPath() {
   if (!state.meta) return;
   try {
     await navigator.clipboard.writeText(state.meta.path);
-    toast('路径已复制');
+    toast(t('Path copied'));
   } catch {
-    toast('复制失败', true);
+    toast(t('Copy failed'), true);
   }
 }
 
@@ -1961,7 +1966,7 @@ async function copyImage() {
   if (!state.meta) return;
   const d = await getDrawable(state.meta.path);
   if (!d) {
-    toast('这个格式没有可导出的像素', true);
+    toast(t('This format has no exportable pixels'), true);
     return;
   }
   try {
@@ -1970,12 +1975,12 @@ async function copyImage() {
     c.height = d.h;
     c.getContext('2d').drawImage(d.img, 0, 0);
     const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
-    if (!blob) throw new Error('编码失败');
+    if (!blob) throw new Error(t('Encode failed'));
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-    toast('图片已复制到剪贴板');
-    setOp('图片已复制到剪贴板');
+    toast(t('Image copied to clipboard'));
+    setOp(t('Image copied to clipboard'));
   } catch {
-    toast('复制失败（此格式或环境不支持）', true);
+    toast(t('Copy failed (format or environment not supported)'), true);
   }
 }
 
@@ -1988,11 +1993,11 @@ async function trashCurrent() {
   if (!m) return;
   const r = await R.trash(m.path);
   if (!r.ok) {
-    toast('删除失败：' + (r.error || ''), true);
+    toast(t('Delete failed: {err}', { err: r.error || '' }), true);
     return;
   }
-  toast('已移到回收站');
-  setOp('已删除（移到回收站）：' + m.name);
+  toast(t('Moved to Recycle Bin'));
+  setOp(t('Deleted (moved to Recycle Bin): {name}', { name: m.name }));
   const wasIndex = state.index;
   state.files = state.files.filter((f) => !samePath(f.path, m.path));
   state.tabs = state.tabs.filter((t) => !samePath(t, m.path));
@@ -2014,69 +2019,70 @@ async function trashCurrent() {
 }
 
 // ------------------------------------------------------------------ 设置页
+// 第三个元素（说明）与快捷键说明都改用英文 key，渲染时由 t() 翻译。
 const FMT_TABLE = [
-  ['JPG / JPEG', 'native', '内置 · Chromium 解码'],
-  ['PNG / APNG', 'native', '内置 · 支持透明'],
-  ['WebP', 'native', '内置 · 支持动画'],
-  ['GIF', 'native', '内置 · 支持动画'],
-  ['BMP', 'native', '内置'],
-  ['ICO', 'native', '内置'],
-  ['SVG', 'native', '内置 · 矢量'],
-  ['AVIF', 'native', '内置'],
-  ['TIFF / TIF', 'preview', '提取内嵌预览'],
-  ['PSD / PSB', 'preview', '读取缩略图资源'],
-  ['CDR / CMX', 'preview', '提取内嵌预览 + libcdr 全量矢量渲染'],
-  ['DWG / DXF', 'cad', 'LibreDWG 矢量解析（原 Rat CAD Viewer 引擎）'],
-  ['HEIC / HEIF', 'preview', '提取内嵌预览'],
-  ['CR2 / CR3 / NEF / ARW / DNG 等 RAW', 'preview', '提取内嵌 JPEG 预览'],
-  ['PDF / AI / EPS / EXR / TGA / JXL', 'no', '未支持（已在列表里排除）'],
+  ['JPG / JPEG', 'native', 'Built-in · Chromium decode'],
+  ['PNG / APNG', 'native', 'Built-in · transparent'],
+  ['WebP', 'native', 'Built-in · animated'],
+  ['GIF', 'native', 'Built-in · animated'],
+  ['BMP', 'native', 'Built-in'],
+  ['ICO', 'native', 'Built-in'],
+  ['SVG', 'native', 'Built-in · vector'],
+  ['AVIF', 'native', 'Built-in'],
+  ['TIFF / TIF', 'preview', 'Extract embedded preview'],
+  ['PSD / PSB', 'preview', 'Read thumbnail resource'],
+  ['CDR / CMX', 'preview', 'Extract embedded preview + libcdr full vector render'],
+  ['DWG / DXF', 'cad', 'LibreDWG vector parse (Rat CAD Viewer engine)'],
+  ['HEIC / HEIF', 'preview', 'Extract embedded JPEG preview'],
+  ['CR2 / CR3 / NEF / ARW / DNG 等 RAW', 'preview', 'Extract embedded JPEG preview'],
+  ['PDF / AI / EPS / EXR / TGA / JXL', 'no', 'Not supported (excluded from list)'],
 ];
 
 const KEYS = [
-  ['← / →', '上一张 / 下一张'],
-  ['空格', '幻灯片放映开关'],
-  ['+ / -', '放大 / 缩小'],
-  ['F', '适应窗口'],
-  ['Ctrl+1', '实际像素'],
-  ['C', '裁剪模式'],
-  ['回车', '应用裁剪'],
-  ['Esc', '退出裁剪 / 放映'],
-  ['1 / 2 / 3 / 4', '切换屏幕（看图 / 管理 / 对比 / 批量）'],
-  ['L', '放大镜'],
-  [', / .', '左转 / 右转 90°'],
-  ['H / V', '水平 / 垂直翻转'],
-  ['Del', '删除到回收站'],
-  ['Ctrl+O', '打开图片'],
-  ['Ctrl+S', '另存为'],
-  ['Ctrl+D', '切换主题'],
-  ['Ctrl+滚轮', '缩放'],
+  ['← / →', 'Prev / next'],
+  ['Space', 'Slideshow on/off'],
+  ['+ / -', 'Zoom in / out'],
+  ['F', 'Fit window'],
+  ['Ctrl+1', 'Actual pixels'],
+  ['C', 'Crop mode'],
+  ['Enter', 'Apply crop'],
+  ['Esc', 'Exit crop / slideshow'],
+  ['1 / 2 / 3 / 4', 'Switch screen (View / Manage / Compare / Batch)'],
+  ['L', 'Magnifier'],
+  [', / .', 'Rotate left / right 90°'],
+  ['H / V', 'Flip horizontal / vertical'],
+  ['Del', 'Delete to Recycle Bin'],
+  ['Ctrl+O', 'Open image'],
+  ['Ctrl+S', 'Save as'],
+  ['Ctrl+D', 'Toggle theme'],
+  ['Ctrl+滚轮', 'Zoom (Ctrl+wheel)'],
 ];
 
 function renderSettings() {
   $('#fmtList').innerHTML = FMT_TABLE.map(([name, kind, note]) => {
     const cls = kind === 'native' ? '' : (kind === 'preview' || kind === 'cad') ? 'pv' : 'no';
-    return `<span class="fmt ${cls}" title="${note}"><i></i>${name}</span>`;
+    return `<span class="fmt ${cls}" title="${t(note)}"><i></i>${name}</span>`;
   }).join('');
 
   $('#keyList').innerHTML = KEYS.map(([k, d]) =>
-    `<div class="keyrow"><span class="kbd">${k}</span><span>${d}</span></div>`).join('');
+    `<div class="keyrow"><span class="kbd">${k}</span><span>${t(d)}</span></div>`).join('');
 
   $('#aboutInfo').innerHTML = kv([
-    ['程序版本', 'V' + (R.appVersion || '1.0.0')],
+    [t('App version'), 'V' + (R.appVersion || '1.0.0')],
     ['Electron', R.versions.electron],
     ['Chromium', R.versions.chrome],
     ['Node', R.versions.node],
-    ['平台', R.platform],
+    [t('Platform'), R.platform],
   ], 'kv-line');
 }
 
 async function refreshAssoc() {
   const s = await R.assocStatus();
   $('#assocInfo').innerHTML = kv([
-    ['当前状态', s.registered ? '已注册为候选' : '未注册'],
-    ['程序文件', s.exeName, 'wrap mono'],
-    ['完整路径', s.exe, 'wrap mono'],
-    ['关联扩展名', (s.extensions || []).length + ' 个'],
+    [t('Current status'), s.registered ? t('Registered as candidate') : t('Not registered')],
+    [t('Program file'), s.exeName, 'wrap mono'],
+    [t('Full path'), s.exe, 'wrap mono'],
+    [t('Associated extensions'), (s.extensions || []).length],
   ]);
   return s;
 }
@@ -2114,7 +2120,7 @@ function bind() {
     if (d) {
       await openPaths([d]);
       initCompare();
-      toast('已在对比屏载入该文件夹');
+      toast(t('Loaded this folder in compare screen'));
     }
   });
 
@@ -2307,27 +2313,45 @@ function bind() {
     const r = await R.assocRegister();
     if (r.ok) {
       await refreshAssoc();
-      toast(`已注册为候选看图程序（${r.extensions} 个扩展名）`);
-      $('#assocHint').textContent = '下一步：点「② 打开系统默认应用页」，把扩展名逐个选成 RatViewer。';
+      toast(t('Registered as candidate viewer ({n} extensions)', { n: r.extensions }));
+      $('#assocHint').textContent = t('Next step: click ② open the system Default Apps page and assign extensions to RatViewer one by one.');
     } else {
-      toast('注册失败：' + (r.error || ''), true);
+      toast(t('Register failed: {err}', { err: r.error || '' }), true);
     }
   });
   $('#btnAssocOpen').addEventListener('click', async () => {
     const r = await R.assocOpenSettings();
     if (r.ok) {
-      toast('已打开系统「默认应用」页面');
-      $('#assocHint').textContent = '在列表里找到「RatViewer」，把 .jpg / .png 等扩展名逐个指定给它。';
+      toast(t('Opened system “Default Apps” page'));
+      $('#assocHint').textContent = t('In the list find RatViewer and assign .jpg/.png etc. to it one by one.');
     } else {
-      toast('打不开系统设置，请手动搜索「默认应用」', true);
+      toast(t('Cannot open system settings, search “Default apps” manually'), true);
     }
   });
   $('#btnAssocOff').addEventListener('click', async () => {
     await R.assocUnregister();
     await refreshAssoc();
-    toast('已注销文件关联');
+    toast(t('Unregistered file association'));
   });
   $('#btnRevealExe').addEventListener('click', () => R.revealExe());
+
+  // 多语言：手动切换（1.0.5）
+  const langSel = $('#langSelect');
+  if (langSel) langSel.addEventListener('change', async () => {
+    const v = langSel.value;
+    try { await R.configSet({ language: v }); } catch {}
+    const lang = window.RAT_I18N.ratResolveLang(v);
+    window.RAT_I18N.setLang(lang);
+    window.RAT_I18N.applyStaticI18n();
+    renderSettings();
+    refreshAssoc();
+    updateStatus();
+    if (state.meta) { renderInfo(state.meta); renderExif(state.meta.path); }
+    else renderEmpty();
+    renderGrid();
+    renderBatchRows();
+    if (!state.meta) setOp(t('Ready'));
+  });
 
   // 拖拽
   const veil = $('#dropVeil');
@@ -2426,7 +2450,7 @@ function onKey(e) {
         $('#viewport').classList.remove('cad-cross');
         state.cad.win = null;
         drawMeasure();
-        setOp('已清除测量');
+        setOp(t('Measure cleared'));
       } else if (state.crop.on) exitCrop();
       else if (state.lens) stopLens();
       else if (state.playing) togglePlay();
@@ -2525,13 +2549,24 @@ function setupCropDrag() {
 
 // ------------------------------------------------------------------ 启动
 async function main() {
+  // ---- 多语言初始化（1.0.5）：读配置 → 解析语言（auto 按时区）→ 应用 ----
+  let cfg = null;
+  try { cfg = await R.configGet() || {}; } catch {}
+  try {
+    const lang = window.RAT_I18N.ratResolveLang(cfg && cfg.language);
+    window.RAT_I18N.setLang(lang);
+    window.RAT_I18N.applyStaticI18n();
+    const ls = $('#langSelect');
+    if (ls) ls.value = (cfg && cfg.language) || 'auto';
+  } catch {}
+
   renderSettings();
   bind();
   refreshAssoc();
 
-  const t = await R.getTheme();
-  state.themeMode = t.mode || 'light';
-  applyThemeAttr(!!t.dark);
+  const themeCfg = await R.getTheme();
+  state.themeMode = themeCfg.mode || 'light';
+  applyThemeAttr(!!themeCfg.dark);
   $$('#segTheme button').forEach((b) => b.classList.toggle('on', b.dataset.mode === state.themeMode));
 
   // 主进程可能在 did-finish-load 时就推过一次；这里再主动取一次，两边都不会漏
@@ -2539,17 +2574,14 @@ async function main() {
   if (pending) openPaths([pending]);
 
   // 读取持久化的幻灯片间隔，应用到设置控件
-  try {
-    const cfg = await R.configGet();
-    if (cfg && cfg.slideshowInterval) {
-      state.slideshowInterval = +cfg.slideshowInterval || 2600;
-      const si = $('#slideInterval');
-      if (si) si.value = String(state.slideshowInterval);
-    }
-  } catch {}
+  if (cfg && cfg.slideshowInterval) {
+    state.slideshowInterval = +cfg.slideshowInterval || 2600;
+    const si = $('#slideInterval');
+    if (si) si.value = String(state.slideshowInterval);
+  }
 
   updateStage();
-  setOp('就绪');
+  setOp(t('Ready'));
 }
 
 window.addEventListener('DOMContentLoaded', main);

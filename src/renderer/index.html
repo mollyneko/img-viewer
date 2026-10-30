@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy"
@@ -57,13 +57,13 @@
     </div>
     <div class="tb-title">RatViewer</div>
     <div class="tabs" id="tabs"></div>
-    <button class="tab-add" id="btnAddTab" title="打开图片 (Ctrl+O)"><svg class="ic"><use href="#i-plus"/></svg></button>
+    <button class="tab-add" id="btnAddTab" data-i18n-title="Open image (Ctrl+O)"><svg class="ic"><use href="#i-plus"/></svg><span data-i18n="Open">打开</span></button>
     <div class="tb-right">
-      <button class="tbtn icon" id="btnTheme" title="切换主题 (Ctrl+D)"><svg class="ic"><use href="#i-moon"/></svg></button>
+      <button class="tbtn icon" id="btnTheme" data-i18n-title="Switch theme (Ctrl+D)"><svg class="ic"><use href="#i-moon"/></svg></button>
       <div class="tb-sep"></div>
-      <button class="winbtn" id="btnMin" title="最小化"><svg class="ic"><use href="#i-min"/></svg></button>
-      <button class="winbtn" id="btnMax" title="最大化"><svg class="ic"><use href="#i-max"/></svg></button>
-      <button class="winbtn close" id="btnClose" title="关闭"><svg class="ic"><use href="#i-close"/></svg></button>
+      <button class="winbtn" id="btnMin" data-i18n-title="Minimize"><svg class="ic"><use href="#i-min"/></svg></button>
+      <button class="winbtn" id="btnMax" data-i18n-title="Maximize"><svg class="ic"><use href="#i-max"/></svg></button>
+      <button class="winbtn close" id="btnClose" data-i18n-title="Close"><svg class="ic"><use href="#i-close"/></svg></button>
     </div>
   </header>
 
@@ -71,47 +71,47 @@
 
     <!-- ============ 左侧导航 ============ -->
     <nav class="rail">
-      <button class="rail-btn on" data-go="view" title="看图 (1)"><svg class="ic"><use href="#i-eye"/></svg><span>看图</span></button>
-      <button class="rail-btn" data-go="manage" title="管理 (2)"><svg class="ic"><use href="#i-grid"/></svg><span>管理</span></button>
-      <button class="rail-btn" data-go="compare" title="对比 (3)"><svg class="ic"><use href="#i-compare"/></svg><span>对比</span></button>
-      <button class="rail-btn" data-go="batch" title="批量 (4)"><svg class="ic"><use href="#i-batch"/></svg><span>批量</span></button>
+      <button class="rail-btn on" data-go="view" data-i18n-title="View (1)"><svg class="ic"><use href="#i-eye"/></svg><span data-i18n="View">看图</span></button>
+      <button class="rail-btn" data-go="manage" data-i18n-title="Manage (2)"><svg class="ic"><use href="#i-grid"/></svg><span data-i18n="Manage">管理</span></button>
+      <button class="rail-btn" data-go="compare" data-i18n-title="Compare (3)"><svg class="ic"><use href="#i-compare"/></svg><span data-i18n="Compare">对比</span></button>
+      <button class="rail-btn" data-go="batch" data-i18n-title="Batch (4)"><svg class="ic"><use href="#i-batch"/></svg><span data-i18n="Batch">批量</span></button>
       <div class="rail-sp"></div>
-      <button class="rail-btn" data-go="settings" title="设置"><svg class="ic"><use href="#i-gear"/></svg><span>设置</span></button>
+      <button class="rail-btn" data-go="settings" data-i18n-title="Settings"><svg class="ic"><use href="#i-gear"/></svg><span data-i18n="Settings">设置</span></button>
     </nav>
 
     <!-- ============ 看图 ============ -->
     <section class="screen on" id="screen-view">
       <div class="toolbar" id="toolbar">
-        <button class="tbtn" id="btnOpen"><svg class="ic"><use href="#i-file"/></svg>打开</button>
-        <button class="tbtn" id="btnFolder"><svg class="ic"><use href="#i-folder"/></svg>文件夹</button>
+        <button class="tbtn" id="btnOpen"><svg class="ic"><use href="#i-file"/></svg><span data-i18n="Open">打开</span></button>
+        <button class="tbtn" id="btnFolder" data-i18n-title="Open folder"><svg class="ic"><use href="#i-folder"/></svg><span data-i18n="Folder">文件夹</span></button>
         <div class="tsep"></div>
-        <button class="tbtn icon" id="btnPrev" title="上一张 (←)"><svg class="ic"><use href="#i-left"/></svg></button>
-        <button class="tbtn icon" id="btnNext" title="下一张 (→)"><svg class="ic"><use href="#i-right"/></svg></button>
+        <button class="tbtn icon" id="btnPrev" data-i18n-title="Previous (←)"><svg class="ic"><use href="#i-left"/></svg></button>
+        <button class="tbtn icon" id="btnNext" data-i18n-title="Next (→)"><svg class="ic"><use href="#i-right"/></svg></button>
         <span class="tcount" id="navCount">0 / 0</span>
         <div class="tsep"></div>
-        <button class="tbtn icon" id="btnZoomOut" title="缩小 (Ctrl+-)"><svg class="ic"><use href="#i-minus"/></svg></button>
-        <button class="tbtn icon" id="btnZoomIn" title="放大 (Ctrl+=)"><svg class="ic"><use href="#i-plus"/></svg></button>
-        <button class="tbtn" id="btnFit" title="适应窗口 (F)"><svg class="ic"><use href="#i-fit"/></svg>适应</button>
-        <button class="tbtn" id="btnOne" title="实际像素 (Ctrl+1)"><svg class="ic"><use href="#i-one"/></svg>1:1</button>
+        <button class="tbtn icon" id="btnZoomOut" data-i18n-title="Zoom out (Ctrl+-)"><svg class="ic"><use href="#i-minus"/></svg></button>
+        <button class="tbtn icon" id="btnZoomIn" data-i18n-title="Zoom in (Ctrl+=)"><svg class="ic"><use href="#i-plus"/></svg></button>
+        <button class="tbtn" id="btnFit" data-i18n-title="Fit window (F)"><svg class="ic"><use href="#i-fit"/></svg><span data-i18n="Fit">适应</span></button>
+        <button class="tbtn" id="btnOne" data-i18n-title="Actual pixels (Ctrl+1)"><svg class="ic"><use href="#i-one"/></svg>1:1</button>
         <span class="tcount" id="zoomVal">100%</span>
         <div class="tsep"></div>
-        <button class="tbtn cad-off icon" id="btnRotL" title="左转 90° (,)"><svg class="ic"><use href="#i-ccw"/></svg></button>
-        <button class="tbtn cad-off icon" id="btnRotR" title="右转 90° (.)"><svg class="ic"><use href="#i-cw"/></svg></button>
-        <button class="tbtn cad-off icon" id="btnFlipH" title="水平翻转 (H)"><svg class="ic"><use href="#i-fliph"/></svg></button>
-        <button class="tbtn cad-off icon" id="btnFlipV" title="垂直翻转 (V)"><svg class="ic"><use href="#i-flipv"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnRotL" data-i18n-title="Rotate left 90° (,)"><svg class="ic"><use href="#i-ccw"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnRotR" data-i18n-title="Rotate right 90° (.)"><svg class="ic"><use href="#i-cw"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnFlipH" data-i18n-title="Flip horizontal (H)"><svg class="ic"><use href="#i-fliph"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnFlipV" data-i18n-title="Flip vertical (V)"><svg class="ic"><use href="#i-flipv"/></svg></button>
         <div class="tsep"></div>
-        <button class="tbtn cad-off icon" id="btnCrop" title="裁剪 (C)"><svg class="ic"><use href="#i-crop"/></svg></button>
-        <button class="tbtn icon" id="btnLens" title="放大镜 (L)"><svg class="ic"><use href="#i-lens"/></svg></button>
-        <button class="tbtn cad-off icon" id="btnWand" title="一键美化"><svg class="ic"><use href="#i-wand"/></svg></button>
-        <button class="tbtn icon" id="btnReset" title="重置调整"><svg class="ic"><use href="#i-reset"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnCrop" data-i18n-title="Crop (C)"><svg class="ic"><use href="#i-crop"/></svg></button>
+        <button class="tbtn icon" id="btnLens" data-i18n-title="Magnifier (L)"><svg class="ic"><use href="#i-lens"/></svg></button>
+        <button class="tbtn cad-off icon" id="btnWand" data-i18n-title="Auto enhance"><svg class="ic"><use href="#i-wand"/></svg></button>
+        <button class="tbtn icon" id="btnReset" data-i18n-title="Reset adjust"><svg class="ic"><use href="#i-reset"/></svg></button>
         <div class="tsep cad-only"></div>
-        <button class="tbtn icon cad-only" id="btnCadWin" title="窗口放大：框选一块区域放大 (W)"><svg class="ic"><use href="#i-window"/></svg></button>
-        <button class="tbtn icon cad-only" id="btnMeasure" title="测量距离 (M)"><svg class="ic"><use href="#i-ruler"/></svg></button>
+        <button class="tbtn icon cad-only" id="btnCadWin" data-i18n-title="Window zoom: drag a box to enlarge (W)"><svg class="ic"><use href="#i-window"/></svg></button>
+        <button class="tbtn icon cad-only" id="btnMeasure" data-i18n-title="Measure distance (M)"><svg class="ic"><use href="#i-ruler"/></svg></button>
         <div class="tspacer"></div>
-        <button class="tbtn" id="btnSlides" title="幻灯片 (空格)"><svg class="ic"><use href="#i-slides"/></svg>放映</button>
-        <button class="tbtn icon" id="btnSave" title="另存为 (Ctrl+S)"><svg class="ic"><use href="#i-save"/></svg></button>
-        <button class="tbtn icon danger" id="btnTrash" title="删除到回收站 (Del)"><svg class="ic"><use href="#i-trash"/></svg></button>
-        <button class="tbtn icon" id="btnMore" title="更多操作"><svg class="ic"><use href="#i-dots"/></svg></button>
+        <button class="tbtn" id="btnSlides" data-i18n-title="Slideshow (Space)"><svg class="ic"><use href="#i-slides"/></svg><span data-i18n="Slideshow">放映</span></button>
+        <button class="tbtn icon" id="btnSave" data-i18n-title="Save as (Ctrl+S)"><svg class="ic"><use href="#i-save"/></svg></button>
+        <button class="tbtn icon danger" id="btnTrash" data-i18n-title="Delete to Recycle Bin (Del)"><svg class="ic"><use href="#i-trash"/></svg></button>
+        <button class="tbtn icon" id="btnMore" data-i18n-title="More actions"><svg class="ic"><use href="#i-dots"/></svg></button>
       </div>
 
       <div class="workarea">
@@ -125,28 +125,28 @@
           <div class="cad-rubber" id="cadRubber"></div>
           <div class="empty-hint" id="emptyHint">
             <svg class="ic big"><use href="#i-file"/></svg>
-            <div class="eh-t">把图片或文件夹拖进来</div>
-            <div class="eh-s">或点左上角「打开」/「文件夹」　支持 JPG · PNG · WebP · GIF · BMP · AVIF · SVG · TIFF · PSD · CDR · DWG · RAW</div>
+            <div class="eh-t" data-i18n="Drag images or a folder here">把图片或文件夹拖进来</div>
+            <div class="eh-s" data-i18n="Or click “Open” / “Folder” at top-left　Supported: JPG · PNG · WebP · GIF · BMP · AVIF · SVG · TIFF · PSD · CDR · DWG · RAW">或点左上角「打开」/「文件夹」　支持 JPG · PNG · WebP · GIF · BMP · AVIF · SVG · TIFF · PSD · CDR · DWG · RAW</div>
           </div>
 
           <div class="crop-box" id="cropBox">
             <div class="gl"></div>
             <span class="h tl"></span><span class="h tr"></span><span class="h bl"></span><span class="h br"></span>
-            <span class="crop-size" id="cropSize">自由裁剪 · 拖动边角调整</span>
+            <span class="crop-size" id="cropSize" data-i18n="Free crop · drag edges/corners to adjust">自由裁剪 · 拖动边角调整</span>
           </div>
 
           <div class="floating float-tc off" id="ratioRow">
             <span class="pill-bar">
-              <span class="lbl">比例</span>
-              <button class="tbtn on" data-r="free">自由</button>
+              <span class="lbl" data-i18n="Ratio">比例</span>
+              <button class="tbtn on" data-r="free" data-i18n="Free">自由</button>
               <button class="tbtn" data-r="1:1">1:1</button>
               <button class="tbtn" data-r="4:3">4:3</button>
               <button class="tbtn" data-r="3:2">3:2</button>
               <button class="tbtn" data-r="16:9">16:9</button>
-              <button class="tbtn" data-r="orig">原图</button>
+              <button class="tbtn" data-r="orig" data-i18n="Original">原图</button>
               <span class="lbl">|</span>
-              <button class="tbtn" id="cropCancel">取消</button>
-              <button class="tbtn accent" id="cropApply">应用并另存</button>
+              <button class="tbtn" id="cropCancel" data-i18n="Cancel">取消</button>
+              <button class="tbtn accent" id="cropApply" data-i18n="Apply and save">应用并另存</button>
             </span>
           </div>
 
@@ -154,21 +154,21 @@
             <span class="pill" id="fmtPill">—</span>
             <!-- CDR/CMX 多页：页码与前后翻页（只有 pages>1 才出现） -->
             <span class="pill-bar" id="pageBar" style="display:none">
-              <button class="tbtn" id="pagePrev" title="上一页">‹</button>
+              <button class="tbtn" id="pagePrev" data-i18n-title="Previous page">‹</button>
               <span class="lbl"><b id="pageNow">1</b> / <span id="pageTotal">1</span></span>
-              <button class="tbtn" id="pageNext" title="下一页">›</button>
+              <button class="tbtn" id="pageNext" data-i18n-title="Next page">›</button>
             </span>
           </div>
           <div class="floating float-tr">
-            <span class="pill" id="previewPill" style="display:none">内嵌预览</span>
-            <span class="pill">滚轮缩放 · 拖动平移</span>
+            <span class="pill" id="previewPill" style="display:none" data-i18n="Embedded preview">内嵌预览</span>
+            <span class="pill" data-i18n="Scroll to zoom · drag to pan">滚轮缩放 · 拖动平移</span>
           </div>
           <div class="floating float-bl">
-            <span class="pill">尺寸 <b id="dimPill">—</b></span>
-            <span class="pill">体积 <b id="sizePill">—</b></span>
+            <span class="pill"><span data-i18n="Size">尺寸</span> <b id="dimPill">—</b></span>
+            <span class="pill"><span data-i18n="File size">体积</span> <b id="sizePill">—</b></span>
           </div>
           <div class="floating float-br">
-            <span class="pill cad-only" id="coordPill" title="光标所在的图纸坐标">X — Y —</span>
+            <span class="pill cad-only" id="coordPill" data-i18n-title="Cursor drawing coordinates" data-i18n="X — Y —">X — Y —</span>
             <span class="pill" id="perfPill">—</span>
           </div>
 
@@ -182,29 +182,29 @@
           <!-- 仅 DWG/DXF：图层树（显隐/独显），样式沿用信息栏的 sec 结构 -->
           <div class="sec cad-only" id="cadLayerSec">
             <div class="sec-h">
-              <svg class="ic" style="width:12px;height:12px"><use href="#i-layers"/></svg>图层
-              <button class="mini-btn" id="cadAllOn" title="全部显示">全开</button>
-              <button class="mini-btn" id="cadAllOff" title="全部隐藏">全关</button>
+              <svg class="ic" style="width:12px;height:12px"><use href="#i-layers"/></svg><span data-i18n="Layers">图层</span>
+              <button class="mini-btn" id="cadAllOn" data-i18n-title="Show all">全开</button>
+              <button class="mini-btn" id="cadAllOff" data-i18n-title="Hide all">全关</button>
             </div>
             <div class="cad-layers" id="cadLayers"></div>
-            <div class="hint cad-note">单击眼睛显隐，双击图层名只看该层</div>
+            <div class="hint cad-note" data-i18n="Click an eye to toggle, double-click a layer name to solo it">单击眼睛显隐，双击图层名只看该层</div>
           </div>
           <div class="sec">
-            <div class="sec-h">信息</div>
+            <div class="sec-h" data-i18n="Info">信息</div>
             <div class="kv" id="kvInfo"></div>
           </div>
           <div class="sec">
-            <div class="sec-h">直方图</div>
+            <div class="sec-h" data-i18n="Histogram">直方图</div>
             <canvas class="hist" id="hist" width="240" height="72"></canvas>
           </div>
           <div class="sec">
-            <div class="sec-h">调整 <button class="mini-btn" id="btnReset2">重置</button></div>
-            <div class="slider-row"><label>亮度</label><input type="range" id="adjBright" min="-100" max="100" value="0"><span id="adjBrightV">0</span></div>
-            <div class="slider-row"><label>对比度</label><input type="range" id="adjContrast" min="-100" max="100" value="0"><span id="adjContrastV">0</span></div>
-            <div class="slider-row"><label>饱和度</label><input type="range" id="adjSat" min="-100" max="100" value="0"><span id="adjSatV">0</span></div>
+            <div class="sec-h"><span data-i18n="Adjust">调整</span> <button class="mini-btn" id="btnReset2" data-i18n="Reset">重置</button></div>
+            <div class="slider-row"><label data-i18n="Brightness">亮度</label><input type="range" id="adjBright" min="-100" max="100" value="0"><span id="adjBrightV">0</span></div>
+            <div class="slider-row"><label data-i18n="Contrast">对比度</label><input type="range" id="adjContrast" min="-100" max="100" value="0"><span id="adjContrastV">0</span></div>
+            <div class="slider-row"><label data-i18n="Saturation">饱和度</label><input type="range" id="adjSat" min="-100" max="100" value="0"><span id="adjSatV">0</span></div>
           </div>
           <div class="sec">
-            <div class="sec-h">EXIF</div>
+            <div class="sec-h" data-i18n="EXIF">EXIF</div>
             <div class="kv" id="kvExif"></div>
           </div>
         </aside>
@@ -216,11 +216,11 @@
     <!-- ============ 管理 ============ -->
     <section class="screen" id="screen-manage">
       <div class="mgbar">
-        <button class="tbtn" id="btnFolder2"><svg class="ic"><use href="#i-folder"/></svg>打开文件夹</button>
-        <span class="tcount" id="mgCount">0 项</span>
-        <input type="search" id="mgFilter" class="mg-filter" placeholder="搜索文件名…" />
+        <button class="tbtn" id="btnFolder2"><svg class="ic"><use href="#i-folder"/></svg><span data-i18n="Open folder">打开文件夹</span></button>
+        <span class="tcount" id="mgCount" data-i18n="0 items">0 项</span>
+        <input type="search" id="mgFilter" class="mg-filter" data-i18n-attr="placeholder" data-i18n="Search filename…" />
         <div class="tspacer"></div>
-        <label class="mg-size">缩略图 <input type="range" id="mgSize" min="120" max="320" step="20" value="180"></label>
+        <label class="mg-size"><span data-i18n="Thumbnails">缩略图</span> <input type="range" id="mgSize" min="120" max="320" step="20" value="180"></label>
       </div>
       <div class="mg-recent" id="mgRecent"></div>
       <div class="gridwrap"><div class="grid" id="grid"></div></div>
@@ -229,11 +229,11 @@
     <!-- ============ 对比 ============ -->
     <section class="screen" id="screen-compare">
       <div class="cmpbar">
-        <span class="tcount">左</span><select id="cmpA" class="sel"></select>
-        <span class="tcount">右</span><select id="cmpB" class="sel"></select>
-        <button class="tbtn" id="btnCmpPick"><svg class="ic"><use href="#i-folder"/></svg>载入文件夹</button>
+        <span class="tcount" data-i18n="Left">左</span><select id="cmpA" class="sel"></select>
+        <span class="tcount" data-i18n="Right">右</span><select id="cmpB" class="sel"></select>
+        <button class="tbtn" id="btnCmpPick"><svg class="ic"><use href="#i-folder"/></svg><span data-i18n="Load folder">载入文件夹</span></button>
         <div class="tspacer"></div>
-        <label class="mg-size">分割 <input type="range" id="cmpSplit" min="0" max="100" value="50"></label>
+        <label class="mg-size"><span data-i18n="Split">分割</span> <input type="range" id="cmpSplit" min="0" max="100" value="50"></label>
       </div>
       <div class="cmpwrap" id="cmpWrap">
         <div class="cmp-pane"><img id="cmpImgA" alt="" draggable="false" /></div>
@@ -248,27 +248,27 @@
     <section class="screen" id="screen-batch">
       <div class="btwrap">
         <div class="btside">
-          <div class="sec-h">输出设置</div>
-          <label class="fld">格式
+          <div class="sec-h" data-i18n="Output settings">输出设置</div>
+          <label class="fld"><span data-i18n="Format">格式</span>
             <select id="bFormat" class="sel">
               <option value="image/jpeg">JPEG</option>
               <option value="image/png">PNG</option>
               <option value="image/webp">WebP</option>
             </select>
           </label>
-          <label class="fld">质量 <input type="range" id="bQuality" min="40" max="100" value="86"><span id="bQualityV">86</span></label>
-          <label class="fld">限制长边 <input type="number" id="bMaxEdge" value="0" min="0" step="256"><span class="hint">0 = 不缩放</span></label>
-          <label class="fld">输出目录
-            <span class="pathpick"><span id="bOutDir" class="path">—</span><button class="mini-btn" id="bPickOut">选择</button></span>
+          <label class="fld"><span data-i18n="Quality">质量</span> <input type="range" id="bQuality" min="40" max="100" value="86"><span id="bQualityV">86</span></label>
+          <label class="fld"><span data-i18n="Limit long edge">限制长边</span> <input type="number" id="bMaxEdge" value="0" min="0" step="256"><span class="hint" data-i18n="0 = no resize">0 = 不缩放</span></label>
+          <label class="fld"><span data-i18n="Output directory">输出目录</span>
+            <span class="pathpick"><span id="bOutDir" class="path">—</span><button class="mini-btn" id="bPickOut" data-i18n="Choose">选择</button></span>
           </label>
           <div class="btnrow">
-            <button class="tbtn primary" id="bRun">开始转换</button>
-            <button class="tbtn" id="bClear">清空列表</button>
+            <button class="tbtn primary" id="bRun" data-i18n="Start conversion">开始转换</button>
+            <button class="tbtn" id="bClear" data-i18n="Clear list">清空列表</button>
           </div>
           <div class="hint" id="bSummary">—</div>
         </div>
         <div class="bttable">
-          <div class="bthead"><span>文件</span><span>进度</span><span>状态</span><span>输出</span></div>
+          <div class="bthead"><span data-i18n="File">文件</span><span data-i18n="Progress">进度</span><span data-i18n="Status">状态</span><span data-i18n="Output">输出</span></div>
           <div class="tbody" id="bRows"></div>
         </div>
       </div>
@@ -278,60 +278,67 @@
     <section class="screen" id="screen-settings">
       <div class="setwrap">
         <div class="card">
-          <h2>外观</h2>
-          <div class="row"><span class="lbl">主题</span>
+          <h2 data-i18n="Appearance">外观</h2>
+          <div class="row"><span class="lbl" data-i18n="Language">语言</span>
+            <select id="langSelect" class="sel">
+              <option value="auto" data-i18n="lang.auto">跟随时区</option>
+              <option value="en" data-i18n="lang.en">English</option>
+              <option value="zh-CN" data-i18n="lang.zh-CN">简体中文</option>
+              <option value="ja" data-i18n="lang.ja">日本語</option>
+              <option value="ko" data-i18n="lang.ko">한국어</option>
+            </select>
+          </div>
+          <div class="row"><span class="lbl" data-i18n="Theme">主题</span>
             <div class="seg" id="segTheme">
-              <button data-mode="light" class="on">白天</button>
-              <button data-mode="dark">黑夜</button>
-              <button data-mode="system">跟随系统</button>
+              <button data-mode="light" class="on" data-i18n="Day">白天</button>
+              <button data-mode="dark" data-i18n="Night">黑夜</button>
+              <button data-mode="system" data-i18n="Follow system">跟随系统</button>
             </div>
           </div>
-          <div class="row"><span class="lbl">幻灯片间隔</span>
+          <div class="row"><span class="lbl" data-i18n="Slideshow interval">幻灯片间隔</span>
             <select id="slideInterval" class="sel">
-              <option value="2000">2 秒</option>
-              <option value="2600" selected>2.6 秒</option>
-              <option value="3000">3 秒</option>
-              <option value="5000">5 秒</option>
-              <option value="8000">8 秒</option>
-              <option value="10000">10 秒</option>
+              <option value="2000" data-i18n="2 seconds">2 秒</option>
+              <option value="2600" selected data-i18n="2.6 seconds">2.6 秒</option>
+              <option value="3000" data-i18n="3 seconds">3 秒</option>
+              <option value="5000" data-i18n="5 seconds">5 秒</option>
+              <option value="8000" data-i18n="8 seconds">8 秒</option>
+              <option value="10000" data-i18n="10 seconds">10 秒</option>
             </select>
           </div>
         </div>
 
         <div class="card">
-          <h2>默认看图软件</h2>
-          <p class="note">
-            按 Windows 规定，程序不能自己把自己设成默认打开方式（微软刻意禁止，防止软件抢关联）。
-            正确做法是：本程序先把自己注册成<strong>候选</strong>，再由你在系统设置里点一下确认。
-            下面一键完成前两步。
+          <h2 data-i18n="Default image viewer">默认看图软件</h2>
+          <p class="note" data-i18n="assoc.note">
+            按 Windows 规定，程序不能自己把自己设成默认打开方式（微软刻意禁止，防止软件抢关联）。正确做法是：本程序先把自己注册成候选，再由你在系统设置里点一下确认。下面一键完成前两步。
           </p>
           <div class="kv kv-line" id="assocInfo"></div>
           <div class="btnrow">
-            <button class="tbtn primary" id="btnAssoc">① 注册为候选看图程序</button>
-            <button class="tbtn" id="btnAssocOpen">② 打开系统「默认应用」页</button>
-            <button class="tbtn" id="btnAssocOff">注销关联</button>
-            <button class="tbtn" id="btnRevealExe">打开程序所在位置</button>
+            <button class="tbtn primary" id="btnAssoc" data-i18n="① Register as candidate viewer">① 注册为候选看图程序</button>
+            <button class="tbtn" id="btnAssocOpen" data-i18n="② Open system “Default Apps” page">② 打开系统「默认应用」页</button>
+            <button class="tbtn" id="btnAssocOff" data-i18n="Unregister">注销关联</button>
+            <button class="tbtn" id="btnRevealExe" data-i18n="Open program location">打开程序所在位置</button>
           </div>
           <div class="hint" id="assocHint"></div>
           <div class="steps">
-            <div class="step"><b>1</b><div>点「① 注册为候选看图程序」——写入 HKCU 注册表（无需管理员权限，只写当前用户）。</div></div>
-            <div class="step"><b>2</b><div>点「② 打开系统默认应用页」——在 Windows 11 会直接跳到本程序的页面。</div></div>
-            <div class="step"><b>3</b><div>把 <b>.jpg .png .webp .cdr .psd</b> 等扩展名逐个选成 <b>RatViewer</b>，完成。</div></div>
+            <div class="step"><b>1</b><div data-i18n="assoc.step1">点「① 注册为候选看图程序」——写入 HKCU 注册表（无需管理员权限，只写当前用户）。</div></div>
+            <div class="step"><b>2</b><div data-i18n="assoc.step2">点「② 打开系统默认应用页」——在 Windows 11 会直接跳到本程序的页面。</div></div>
+            <div class="step"><b>3</b><div data-i18n="assoc.step3">把 .jpg .png .webp .cdr .psd 等扩展名逐个选成 RatViewer，完成。</div></div>
           </div>
         </div>
 
         <div class="card">
-          <h2>支持的格式</h2>
+          <h2 data-i18n="Supported formats">支持的格式</h2>
           <div class="fmts" id="fmtList"></div>
         </div>
 
         <div class="card">
-          <h2>快捷键</h2>
+          <h2 data-i18n="Shortcuts">快捷键</h2>
           <div class="keys" id="keyList"></div>
         </div>
 
         <div class="card">
-          <h2>关于</h2>
+          <h2 data-i18n="About">关于</h2>
           <div class="kv kv-line" id="aboutInfo"></div>
         </div>
       </div>
@@ -340,15 +347,16 @@
   </div>
 
   <footer class="statusbar">
-    <span class="s" id="sbFile">未打开文件</span>
-    <span class="s sp" id="sbOp">就绪</span>
+    <span class="s" id="sbFile" data-i18n="No file opened">未打开文件</span>
+    <span class="s sp" id="sbOp" data-i18n="Ready">就绪</span>
   </footer>
 </div>
 
 <div class="ctx-menu" id="ctxMenu"></div>
 <div class="toast" id="toast"></div>
-<div class="drop-veil" id="dropVeil"><div>松开以打开</div></div>
+<div class="drop-veil" id="dropVeil"><div data-i18n="Release to open">松开以打开</div></div>
 
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

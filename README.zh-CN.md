@@ -32,8 +32,8 @@
 
 | 文件 | 类型 | 适合谁 |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.4.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.4.exe)** | 安装版（NSIS） | 日常使用。可选安装目录、创建桌面/开始菜单快捷方式、支持注册文件关联 |
-| **[RatViewer-Portable-V1.0.4.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.4.exe)** | 免安装版（单文件） | 放 U 盘里随身带，双击即用，不写注册表、不留痕 |
+| **[RatViewer-Setup-V1.0.5.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.5.exe)** | 安装版（NSIS） | 日常使用。可选安装目录、创建桌面/开始菜单快捷方式、支持注册文件关联 |
+| **[RatViewer-Portable-V1.0.5.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.5.exe)** | 免安装版（单文件） | 放 U 盘里随身带，双击即用，不写注册表、不留痕 |
 
 > **关于「未知发布者」警告**
 > 安装包未购买代码签名证书（EV 证书年费不便宜）。首次运行 Windows SmartScreen 会提示"已保护你的电脑"，点「更多信息」→「仍要运行」即可。如果你介意，也可以直接[从源码构建](#从源码构建-1)。Releases 页面同时提供 `SHA256SUMS.txt`，可用 `certutil -hashfile <文件> SHA256` 核对完整性。
