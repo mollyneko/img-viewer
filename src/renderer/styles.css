@@ -88,7 +88,7 @@ input, select { font: inherit; }
   -webkit-app-region: drag;
   user-select: none;
 }
-.titlebar button, .titlebar .tabs, .titlebar .tab-add { -webkit-app-region: no-drag; }
+.titlebar button, .titlebar .tabs { -webkit-app-region: no-drag; }
 
 .tb-logo {
   width: 22px; height: 22px; flex: 0 0 auto; border-radius: 6px;
@@ -119,14 +119,6 @@ input, select { font: inherit; }
 .tab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
 .tab .x { font-size: 12px; color: var(--text-3); flex: 0 0 auto; padding: 0 2px; border-radius: 4px; }
 .tab .x:hover { background: var(--bg-hover); color: var(--text); }
-
-.tab-add {
-  width: 26px; height: 26px; flex: 0 0 auto;
-  border: 0; background: transparent; border-radius: 6px;
-  color: var(--text-3); cursor: pointer;
-  display: grid; place-items: center;
-}
-.tab-add:hover { background: var(--bg-hover); color: var(--text); }
 
 .tb-right { margin-left: auto; display: flex; align-items: center; flex: 0 0 auto; }
 .tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }

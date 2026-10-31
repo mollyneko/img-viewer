@@ -2107,7 +2107,6 @@ function bind() {
     if (paths && paths.length) openPaths(paths);
   };
   $('#btnOpen').addEventListener('click', doOpen);
-  $('#btnAddTab').addEventListener('click', doOpen);
   $('#btnFolder').addEventListener('click', async () => {
     const d = await R.openFolder();
     if (d) openPaths([d]);
