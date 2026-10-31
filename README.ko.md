@@ -32,8 +32,8 @@
 
 | 파일 | 종류 | 대상 |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.5.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.5.exe)** | 설치 프로그램(NSIS) | 일상 사용. 설치 폴더 선택, 바탕화면/시작 메뉴 바로가기 생성, 파일 연결 등록 지원. |
-| **[RatViewer-Portable-V1.0.5.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.5.exe)** | 이식형(단일 파일) | USB에 넣고 휴대. 더블클릭으로 실행, 레지스트리 기록 없음, 흔적 없음. |
+| **[RatViewer-Setup-V1.0.6.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.6.exe)** | 설치 프로그램(NSIS) | 일상 사용. 설치 폴더 선택, 바탕화면/시작 메뉴 바로가기 생성, 파일 연결 등록 지원. |
+| **[RatViewer-Portable-V1.0.6.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.6.exe)** | 이식형(단일 파일) | USB에 넣고 휴대. 더블클릭으로 실행, 레지스트리 기록 없음, 흔적 없음. |
 
 > **"게시자 알 수 없음" 경고에 대하여**
 > 설치 프로그램은 코드 서명이 되어 있지 않습니다(EV 인증서는 저렴하지 않습니다). 첫 실행 시 Windows SmartScreen이 "PC를 보호했습니다"라고 띄웁니다. "자세히 알아보기" → "실행"을 누르세요. 신경 쓰인다면 [소스에서 빌드](#소스에서-빌드)할 수도 있습니다. Releases 페이지에는 `SHA256SUMS.txt`도 있어 `certutil -hashfile <파일> SHA256`로 무결성을 확인할 수 있습니다.

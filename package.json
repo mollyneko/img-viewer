@@ -1,7 +1,7 @@
 {
   "name": "rat-image-viewer",
   "productName": "RatViewer",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "高性能、轻量的全能看图软件,支持 CDR/PSD 内嵌预览",
   "main": "src/main/main.js",
   "author": "Rat",

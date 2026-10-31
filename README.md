@@ -37,8 +37,8 @@ Grab the latest build (Windows 10 / 11, 64-bit) from the **[Releases page](https
 
 | File | Type | For |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.5.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.5.exe)** | Installer (NSIS) | Everyday use. Choose the install folder, create desktop/start-menu shortcuts, and register file associations. |
-| **[RatViewer-Portable-V1.0.5.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.5.exe)** | Portable (single file) | Carry it on a USB stick — double-click to run, no registry writes, no leftovers. |
+| **[RatViewer-Setup-V1.0.6.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.6.exe)** | Installer (NSIS) | Everyday use. Choose the install folder, create desktop/start-menu shortcuts, and register file associations. |
+| **[RatViewer-Portable-V1.0.6.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.6.exe)** | Portable (single file) | Carry it on a USB stick — double-click to run, no registry writes, no leftovers. |
 
 > **About the "unknown publisher" warning**
 > The installer isn't code-signed (an EV certificate isn't cheap). On first run Windows SmartScreen may say "Windows protected your PC." Click "More info" → "Run anyway." If that bothers you, you can always [build from source](#build-from-source).

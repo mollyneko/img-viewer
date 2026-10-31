@@ -32,8 +32,8 @@
 
 | ファイル | 種類 | 向いている人 |
 |---|---|---|
-| **[RatViewer-Setup-V1.0.5.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.5.exe)** | インストーラー（NSIS） | 日常利用。インストール先の選択、デスクトップ/スタートメニューのショートカット作成、ファイルの関連付けに対応。 |
-| **[RatViewer-Portable-V1.0.5.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.5.exe)** | ポータブル（単一ファイル） | USB メモリに入れて持ち運び。ダブルクリックで実行、レジストリ書き込みなし、跡残しなし。 |
+| **[RatViewer-Setup-V1.0.6.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Setup-V1.0.6.exe)** | インストーラー（NSIS） | 日常利用。インストール先の選択、デスクトップ/スタートメニューのショートカット作成、ファイルの関連付けに対応。 |
+| **[RatViewer-Portable-V1.0.6.exe](https://github.com/mollyneko/RatImgViewer/releases/latest/download/RatViewer-Portable-V1.0.6.exe)** | ポータブル（単一ファイル） | USB メモリに入れて持ち運び。ダブルクリックで実行、レジストリ書き込みなし、跡残しなし。 |
 
 > **「発行元が不明」警告について**
 > インストーラーはコード署名されていません（EV 証明書は安くありません）。初回実行時に Windows SmartScreen が「Windows によって PC が保護されました」と表示します。「詳細情報」→「実行」をクリックしてください。気になる場合は[ソースからビルド](#ソースからのビルド)も可能です。Releases ページには `SHA256SUMS.txt` もあり、`certutil -hashfile <ファイル> SHA256` で整合性を確認できます。
