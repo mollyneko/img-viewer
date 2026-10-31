@@ -1,3 +1,4 @@
+(function () {
 'use strict';
 
 /* RatViewer — 多语言引擎 (i18n)
@@ -1052,3 +1053,4 @@ window.RAT_I18N = {
   setLang: (code) => { RAT_LANG = code; },
   order: RAT_LANG_ORDER,
 };
+})();

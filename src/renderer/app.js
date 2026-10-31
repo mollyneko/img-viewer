@@ -883,10 +883,11 @@ const EMPTY_HINT_TITLE = 'Drag images or a folder here';
 const EMPTY_HINT_SUB = 'Or click “Open” / “Folder” at top-left　Supported: JPG · PNG · WebP · GIF · BMP · AVIF · SVG · TIFF · PSD · CDR · DWG · RAW';
 
 function setEmptyHint(title, sub) {
-  const t = $('#emptyHint .eh-t');
-  const s = $('#emptyHint .eh-s');
-  if (t) t.textContent = title != null ? title : t(EMPTY_HINT_TITLE);
-  if (s) s.textContent = sub != null ? sub : t(EMPTY_HINT_SUB);
+  // 注意：变量名不能叫 t —— 那是全局翻译函数 t(key)，同名会把函数遮蔽成 DOM 节点
+  const elTitle = $('#emptyHint .eh-t');
+  const elSub = $('#emptyHint .eh-s');
+  if (elTitle) elTitle.textContent = title != null ? title : t(EMPTY_HINT_TITLE);
+  if (elSub) elSub.textContent = sub != null ? sub : t(EMPTY_HINT_SUB);
 }
 
 function renderEmpty(hintTitle, hintSub) {
@@ -2584,4 +2585,11 @@ async function main() {
   setOp(t('Ready'));
 }
 
-window.addEventListener('DOMContentLoaded', main);
+// 启动入口：脚本在 body 末尾加载，正常情况 DOM 还没解析完（loading），等 DOMContentLoaded 即可。
+// 但如果脚本被延后执行（缓存命中/页面已就绪），DOMContentLoaded 早已触发过，
+// 只挂监听器就永远不会初始化——按钮、快捷键全部失效。所以必须按 readyState 分流。
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', main, { once: true });
+} else {
+  main();
+}
