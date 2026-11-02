@@ -1,7 +1,7 @@
 {
   "name": "rat-image-viewer",
   "productName": "RatViewer",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "高性能、轻量的全能看图软件,支持 CDR/PSD 内嵌预览",
   "main": "src/main/main.js",
   "author": "Rat",
@@ -59,8 +59,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "RatViewer",
-      "installerLanguages": ["zh_CN"],
-      "language": "2052",
+      "installerLanguages": ["en_US", "zh_CN", "ja_JP", "ko_KR"],
       "artifactName": "RatViewer-Setup-V${version}.exe",
       "include": "build/installer.nsh"
     }

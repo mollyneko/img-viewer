@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('rat', {
   assocRegister: () => ipcRenderer.invoke('assoc:register'),
   assocUnregister: () => ipcRenderer.invoke('assoc:unregister'),
   assocStatus: () => ipcRenderer.invoke('assoc:status'),
+  assocSetDefault: () => ipcRenderer.invoke('assoc:setDefault'),
   assocOpenSettings: () => ipcRenderer.invoke('assoc:openSettings'),
 
   // ---- 外部请求打开文件（双击文件 / 命令行 / 拖到图标上）----
@@ -79,6 +80,6 @@ contextBridge.exposeInMainWorld('rat', {
   // ---- 程序版本（主进程通过 additionalArguments 注入，语义化版本，不含 V 前缀）----
   appVersion: (() => {
     const hit = process.argv.find((a) => a.startsWith('--rat-app-version='));
-    return hit ? hit.slice('--rat-app-version='.length) : '1.0.6';
+    return hit ? hit.slice('--rat-app-version='.length) : '1.0.7';
   })(),
 });

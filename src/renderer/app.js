@@ -2079,13 +2079,28 @@ function renderSettings() {
 
 async function refreshAssoc() {
   const s = await R.assocStatus();
-  $('#assocInfo').innerHTML = kv([
+  const sum = s.summary || null;
+  const total = sum ? sum.total : (s.extensions || []).length;
+  const mine = sum ? (sum.mine || []).length : 0;
+  const locked = sum ? (sum.locked || []) : [];
+
+  const rows = [
     [t('Current status'), s.registered ? t('Registered as candidate') : t('Not registered')],
-    [t('Program file'), s.exeName, 'wrap mono'],
-    [t('Full path'), s.exe, 'wrap mono'],
-    [t('Associated extensions'), (s.extensions || []).length],
-  ]);
-  return s;
+    [t('Formats taken over'), `${mine} / ${total}`],
+  ];
+  if (locked.length) {
+    const shown = locked.slice(0, 8).join(' ');
+    rows.push([
+      t('Needs Windows confirmation'),
+      shown + (locked.length > 8 ? `  +${locked.length - 8}` : ''),
+      'wrap',
+    ]);
+  }
+  rows.push([t('Program file'), s.exeName, 'wrap mono']);
+  rows.push([t('Full path'), s.exe, 'wrap mono']);
+
+  $('#assocInfo').innerHTML = kv(rows);
+  return { ...s, mine, total, locked };
 }
 
 // ------------------------------------------------------------------ 事件绑定
@@ -2308,22 +2323,39 @@ function bind() {
     renderBatchRows();
   });
 
-  // 设置屏
+  // 设置屏：一键设为默认看图软件
   $('#btnAssoc').addEventListener('click', async () => {
-    const r = await R.assocRegister();
-    if (r.ok) {
-      await refreshAssoc();
-      toast(t('Registered as candidate viewer ({n} extensions)', { n: r.extensions }));
-      $('#assocHint').textContent = t('Next step: click ② open the system Default Apps page and assign extensions to RatViewer one by one.');
-    } else {
-      toast(t('Register failed: {err}', { err: r.error || '' }), true);
+    const btn = $('#btnAssoc');
+    btn.disabled = true;
+    try {
+      const r = await R.assocSetDefault();
+      if (!r.ok) {
+        toast(t('Setting failed: {err}', { err: r.error || (r.disabled ? 'registry disabled' : '') }), true);
+        return;
+      }
+      const s = await refreshAssoc();
+      if (s.locked.length) {
+        // 还有被系统锁定的格式：把用户送到系统页，那里才有权限改
+        toast(t('Took over {n} formats. Opening Windows settings for the rest…', { n: s.mine }));
+        try { await R.assocOpenSettings(); } catch {}
+        $('#assocHint').textContent = t('In the page that just opened, click “Set default” (Windows 11) or choose RatViewer for JPG / PNG.');
+      } else {
+        toast(t('Done — RatViewer now opens {n} image formats by default', { n: s.mine }));
+        $('#assocHint').textContent = t('All supported formats now open with RatViewer.');
+      }
+    } catch (e) {
+      toast(t('Setting failed: {err}', { err: String((e && e.message) || e) }), true);
+    } finally {
+      btn.disabled = false;
     }
   });
   $('#btnAssocOpen').addEventListener('click', async () => {
     const r = await R.assocOpenSettings();
     if (r.ok) {
       toast(t('Opened system “Default Apps” page'));
-      $('#assocHint').textContent = t('In the list find RatViewer and assign .jpg/.png etc. to it one by one.');
+      $('#assocHint').textContent = r.win11
+        ? t('Find RatViewer on that page and click “Set default”.')
+        : t('Find RatViewer in the list and choose it for each image format.');
     } else {
       toast(t('Cannot open system settings, search “Default apps” manually'), true);
     }

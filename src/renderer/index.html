@@ -309,20 +309,20 @@
         <div class="card">
           <h2 data-i18n="Default image viewer">默认看图软件</h2>
           <p class="note" data-i18n="assoc.note">
-            按 Windows 规定，程序不能自己把自己设成默认打开方式（微软刻意禁止，防止软件抢关联）。正确做法是：本程序先把自己注册成候选，再由你在系统设置里点一下确认。下面一键完成前两步。
+            按 Windows 规定，程序不能擅自改掉你已经选过的默认打开方式。点一次下面的按钮，能自动的会立刻做好：还没指定过打开方式的格式（CDR / PSD / DWG / RAW 等）直接归 RatViewer；已经被系统或你选过的格式（JPG / PNG 等）会打开系统设置页，点一次确认即可。
           </p>
           <div class="kv kv-line" id="assocInfo"></div>
           <div class="btnrow">
-            <button class="tbtn primary" id="btnAssoc" data-i18n="① Register as candidate viewer">① 注册为候选看图程序</button>
-            <button class="tbtn" id="btnAssocOpen" data-i18n="② Open system “Default Apps” page">② 打开系统「默认应用」页</button>
+            <button class="tbtn primary" id="btnAssoc" data-i18n="Set as default image viewer">设为默认看图软件</button>
+            <button class="tbtn" id="btnAssocOpen" data-i18n="Open system “Default Apps” page">打开系统「默认应用」页</button>
             <button class="tbtn" id="btnAssocOff" data-i18n="Unregister">注销关联</button>
             <button class="tbtn" id="btnRevealExe" data-i18n="Open program location">打开程序所在位置</button>
           </div>
           <div class="hint" id="assocHint"></div>
           <div class="steps">
-            <div class="step"><b>1</b><div data-i18n="assoc.step1">点「① 注册为候选看图程序」——写入 HKCU 注册表（无需管理员权限，只写当前用户）。</div></div>
-            <div class="step"><b>2</b><div data-i18n="assoc.step2">点「② 打开系统默认应用页」——在 Windows 11 会直接跳到本程序的页面。</div></div>
-            <div class="step"><b>3</b><div data-i18n="assoc.step3">把 .jpg .png .webp .cdr .psd 等扩展名逐个选成 RatViewer，完成。</div></div>
+            <div class="step"><b>1</b><div data-i18n="assoc.step1">点「设为默认看图软件」——自动注册候选并接管还没有主的格式（无需管理员权限，只写当前用户）。</div></div>
+            <div class="step"><b>2</b><div data-i18n="assoc.step2">如果还有 JPG / PNG 这类被系统锁定的格式，会打开系统「默认应用」页。</div></div>
+            <div class="step"><b>3</b><div data-i18n="assoc.step3">在 Windows 11 上，那一页有系统提供的「设为默认」按钮，点一下全部完成。</div></div>
           </div>
         </div>
 

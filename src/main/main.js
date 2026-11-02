@@ -672,7 +672,10 @@ function createWindow() {
   });
 
   win.setMenuBarVisibility(false);
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    win.show();
+    maybeOfferDefaultViewer(win);
+  });
 
   const pushWinState = () => {
     if (win && !win.isDestroyed()) {
@@ -721,6 +724,44 @@ function createWindow() {
 }
 
 // ---------------------------------------------------------------- IPC
+// 打开「默认应用」设置页。Win11 22H2+ 支持 registeredAppUser 参数，能直达本程序
+// 的页面（那里有系统提供的「设为默认」一键按钮）；Win10 不认这个参数，退回总页面。
+function isWin11() {
+  try {
+    return parseInt(String(require('node:os').release()).split('.')[2], 10) >= 22000;
+  } catch {
+    return false;
+  }
+}
+
+async function openDefaultAppsPage() {
+  const win11 = isWin11();
+  const attempts = win11
+    ? ['ms-settings:defaultapps?registeredAppUser=' + encodeURIComponent(assoc.KEY_NAME), 'ms-settings:defaultapps']
+    : ['ms-settings:defaultapps'];
+  for (const url of attempts) {
+    try {
+      await shell.openExternal(url);
+      return { ok: true, url, win11 };
+    } catch {}
+  }
+  return { ok: false, win11 };
+}
+
+// 安装器里用户勾了「设为默认看图软件」：首次启动把还没接管的格式引导到系统页。
+// 能自动接管的在安装时就已经生效了，这里只处理被 UserChoice 锁住的那部分。
+async function maybeOfferDefaultViewer(win) {
+  if (process.platform !== 'win32') return;
+  try {
+    if (!(await assoc.consumeInstallRequest())) return;
+    const s = await assoc.summary().catch(() => null);
+    if (!s || !s.locked || !s.locked.length) return;   // 全接管了就不用打扰
+    setTimeout(() => {
+      if (win && !win.isDestroyed()) openDefaultAppsPage().catch(() => {});
+    }, 1500);
+  } catch {}
+}
+
 function registerIpc() {
   // 窗口控制
   ipcMain.handle('win:minimize', () => win?.minimize());
@@ -1059,22 +1100,27 @@ function registerIpc() {
     exe: assoc.exePath(),
     exeName: path.basename(process.execPath),
     extensions: assoc.EXTENSIONS,
+    // 已经归本程序的扩展名 / 被系统 UserChoice 锁给别人的扩展名
+    summary: await assoc.summary().catch(() => null),
   }));
 
-  // Windows 不允许静默改默认程序，只能把用户送到设置页
-  ipcMain.handle('assoc:openSettings', async () => {
-    const attempts = [
-      'ms-settings:defaultapps?registeredAppUser=' + encodeURIComponent(assoc.KEY_NAME),
-      'ms-settings:defaultapps',
-    ];
-    for (const url of attempts) {
-      try {
-        await shell.openExternal(url);
-        return { ok: true, url };
-      } catch {}
+  // 「设为默认看图软件」= 注册候选 + 接管没有主儿的格式 + 把用户送到系统页
+  // 一次调用把能自动的全做完，用户只需要在系统页对锁定格式点一次确认。
+  ipcMain.handle('assoc:setDefault', async () => {
+    try {
+      const r = await assoc.register();
+      if (!r || r.disabled) return { ok: false, disabled: true };
+      const s = await assoc.summary().catch(() => null);
+      return { ok: true, claimed: r.claimed || [], locked: r.locked || [], summary: s };
+    } catch (e) {
+      return { ok: false, error: String(e.message || e) };
     }
-    return { ok: false };
   });
+
+  // Windows 不允许静默改默认程序，只能把用户送到设置页。
+  // Win11 22H2+ 支持带 registeredAppUser，能直达本程序页面并出现「设为默认」一键按钮；
+  // Win10 不认这个参数，退回到默认应用总页面。
+  ipcMain.handle('assoc:openSettings', async () => openDefaultAppsPage());
 
   // 启动时带进来的文件路径
   ipcMain.handle('app:pendingPath', () => {
